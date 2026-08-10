@@ -17,12 +17,14 @@ from .uart_bridge import Stm32Bridge
 
 @dataclass
 class Limits:
-    pan_min: float = -135.0
-    pan_max: float = 135.0
-    tilt_min: float = -90.0
-    tilt_max: float = 90.0
+    # gokhisar servo uzayı: 0…180°, orta = 90°
+    pan_min: float = 0.0
+    pan_max: float = 180.0
+    tilt_min: float = 0.0
+    tilt_max: float = 180.0
+    home_deg: float = 90.0
     engage_err_deg: float = 0.35
-    engage_stable_s: float = 1.0  # gokhisar: menzilde kararlı kalma
+    engage_stable_s: float = 1.0  # menzilde kararlı kalma
 
 
 def clamp(v: float, lo: float, hi: float) -> float:
@@ -57,8 +59,8 @@ def run(args: argparse.Namespace) -> None:
     pid_x = PID(PIDGains(kp=args.kp, ki=args.ki, kd=args.kd, output_limit=args.out_limit))
     pid_y = PID(PIDGains(kp=args.kp, ki=args.ki, kd=args.kd, output_limit=args.out_limit))
 
-    pan = 0.0
-    tilt = 0.0
+    pan = limits.home_deg
+    tilt = limits.home_deg
     in_range_since: float | None = None
     stop = False
 
@@ -119,8 +121,8 @@ def run(args: argparse.Namespace) -> None:
                 continue
 
             if home:
-                pan = 0.0
-                tilt = 0.0
+                pan = limits.home_deg
+                tilt = limits.home_deg
                 pid_x.reset()
                 pid_y.reset()
 
@@ -219,7 +221,7 @@ def run(args: argparse.Namespace) -> None:
                     and range_stable
                 )
 
-            bridge.send(
+            sent = bridge.send(
                 DownlinkCommand(
                     pan_deg=pan,
                     tilt_deg=tilt,
@@ -233,8 +235,8 @@ def run(args: argparse.Namespace) -> None:
                 )
             )
 
-            # Ateş STM'ye gitti → engage talebini kapat (gokhisar gibi tek sefer)
-            if want_fire:
+            # Engage'i ancak FIRE frame gerçekten UART'a yazıldıysa kapat
+            if want_fire and sent:
                 state.clear_engage()
                 in_range_since = None
 

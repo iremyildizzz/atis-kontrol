@@ -1,6 +1,8 @@
 /**
  * @file servo.h
  * @brief DS5160 HV pan/tilt PWM — PA6=TIM3_CH1, PA7=TIM3_CH2, 50 Hz
+ *
+ * Açı uzayı gokhisar ile aynı: 0°…180°, orta (home) = 90°.
  */
 #ifndef ATIS_SERVO_H
 #define ATIS_SERVO_H
@@ -8,11 +10,12 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-/* Soft limits (cdeg = derece * 10) — KTR UI / mekanik */
-#define SERVO_PAN_MIN_CDEG   (-1350)
-#define SERVO_PAN_MAX_CDEG   ( 1350)
-#define SERVO_TILT_MIN_CDEG  ( -900)
-#define SERVO_TILT_MAX_CDEG  (  900)
+/* cdeg = derece * 10 */
+#define SERVO_PAN_MIN_CDEG    (0)
+#define SERVO_PAN_MAX_CDEG    (1800)
+#define SERVO_TILT_MIN_CDEG   (0)
+#define SERVO_TILT_MAX_CDEG   (1800)
+#define SERVO_HOME_CDEG       (900)   /* 90.0° */
 
 void Servo_Init(void);
 void Servo_SetEnabled(bool enabled);

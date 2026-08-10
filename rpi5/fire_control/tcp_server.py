@@ -7,8 +7,14 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-# gokhisar CLASS_NAMES ile aynı
-PEER_CLASS_NAMES = {0: "fuze", 1: "helikopter", 2: "iha", 3: "ucak", 4: "balon"}
+# gokhisar shared/classes.py TargetClass ile aynı
+PEER_CLASS_NAMES = {
+    0: "fuze",         # Balistik Füze
+    1: "helikopter",   # Helikopter
+    2: "iha",          # İHA
+    3: "ucak",         # Savaş Uçağı
+    4: "balon",        # Balon
+}
 
 
 @dataclass
@@ -17,7 +23,7 @@ class MissionState:
     stage: int = 0
     err_x: float = 0.0
     err_y: float = 0.0
-    class_id: int = 0
+    class_id: int = -1  # henüz gelmedi; 0=fuze ile karışmasın
     class_name: str = ""
     iff: str = "bilinmiyor"  # dost | dusman | bilinmiyor
     track_id: int = -1
@@ -128,8 +134,10 @@ class MissionState:
 
                 if "iff" in msg:
                     self.iff = str(msg["iff"])
-                self.track_id = int(msg.get("track_id", self.track_id))
-                self.locked = bool(msg.get("locked", False))
+                if "track_id" in msg:
+                    self.track_id = int(msg["track_id"])
+                if "locked" in msg:
+                    self.locked = bool(msg["locked"])
                 if "stage" in msg:
                     self.stage = int(msg["stage"])
 

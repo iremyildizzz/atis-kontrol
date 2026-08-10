@@ -72,16 +72,15 @@ Piksel → açı mesafeden bağımsızdır (16mm + IMX296 modeli).
 {"type":"engage","track_id":7,"class_id":3,"stage":3}
 ```
 
-`class_id`: `0=fuze`, `1=helikopter`, `2=iha`, `3=ucak`, `4=balon`
+`class_id` (gokhisar ile aynı):
 
-## Aşama-3 imha mesafeleri
-
-| Hedef | Geçerli mesafe |
-|-------|----------------|
-| Uçak / F16 | **10–15 m** |
-| Helikopter | **5–15 m** |
-| Balistik füze | **5–15 m** |
-| Mini/Micro İHA | **0–15 m** |
+| id | ad | Görünen ad | Aşama-3 menzil |
+|----|-----|------------|----------------|
+| 0 | `fuze` | Balistik Füze | 5–15 m |
+| 1 | `helikopter` | Helikopter | 5–15 m |
+| 2 | `iha` | İHA | 0–15 m |
+| 3 | `ucak` | Savaş Uçağı | 10–15 m |
+| 4 | `balon` | Balon | imha yok |
 
 ## Donanım pinleri (STM32F411)
 
@@ -93,7 +92,7 @@ Piksel → açı mesafeden bağımsızdır (16mm + IMX296 modeli).
 | UART TX / RX | **PA9 / PA10** |
 | Baud | 115200 8N1 |
 
-Servo limit: pan **-135°…+135°**, tilt **-90°…+90°**, PWM 50 Hz.
+Servo açı: **0°…180°**, orta (home) **90°**, PWM 50 Hz.
 
 ## Güvenlik
 

@@ -15,8 +15,8 @@ extern TIM_HandleTypeDef htim3;
 #define PULSE_MIN_US      500u
 #define PULSE_MAX_US     2500u
 
-static int16_t s_pan_cdeg  = 0;
-static int16_t s_tilt_cdeg = 0;
+static int16_t s_pan_cdeg  = SERVO_HOME_CDEG;
+static int16_t s_tilt_cdeg = SERVO_HOME_CDEG;
 static bool    s_enabled   = false;
 static bool    s_limited   = false;
 
@@ -67,8 +67,8 @@ static void apply_pwm(void)
 
 void Servo_Init(void)
 {
-    s_pan_cdeg  = 0;
-    s_tilt_cdeg = 0;
+    s_pan_cdeg  = SERVO_HOME_CDEG;
+    s_tilt_cdeg = SERVO_HOME_CDEG;
     s_enabled   = false;
     s_limited   = false;
 
@@ -95,8 +95,8 @@ bool Servo_SetAnglesCdeg(int16_t pan_cdeg, int16_t tilt_cdeg)
 void Servo_Home(void)
 {
     s_limited   = false;
-    s_pan_cdeg  = 0;
-    s_tilt_cdeg = 0;
+    s_pan_cdeg  = SERVO_HOME_CDEG;
+    s_tilt_cdeg = SERVO_HOME_CDEG;
     apply_pwm();
 }
 
