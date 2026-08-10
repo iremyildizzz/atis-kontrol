@@ -1,0 +1,32 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Env / secrets
+.env
+*.pem
+
+# Arkadaş zip çıkarımları (atış koduna ait değil)
+_peer_gokhisar/
+_peer_gokhisar_v2/
+
+# STM32 / Cube build artıkları
+stm32f411/Debug/
+stm32f411/Release/
+stm32f411/MDK-ARM/
+*.o
+*.elf
+*.hex
+*.bin
+*.map
+*.launch
