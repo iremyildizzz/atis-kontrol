@@ -24,10 +24,14 @@ Kablo:
 ```bash
 python -m fire_control.main \
   --stm-port /dev/ttyAMA0 \
-  --lidar-port /dev/ttyAMA1 \
+  --lidar-port "" \
   --tcp-port 5005 \
+  --video-host 192.168.137.147 \
   --frame-w 1280 \
   --frame-h 720
 ```
+
+`--video-host` = **PC IP**. Kamera fire_control ile birlikte sürekli UDP:5000’e gider.
+Arayüz Başlat = sadece dinler; Durdur = PC tarafını kapatır, Pi yayına devam eder.
 
 Örnek giriş mesajları: `../PROTOCOL.md`

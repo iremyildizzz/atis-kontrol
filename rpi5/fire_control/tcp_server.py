@@ -5,7 +5,7 @@ import json
 import socket
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 # gokhisar shared/classes.py TargetClass ile aynı
 PEER_CLASS_NAMES = {
@@ -183,6 +183,10 @@ class MissionState:
                 self.estop = False
             elif t == "stage":
                 self.stage = int(msg.get("stage", self.stage))
+            elif t == "video":
+                # {"type":"video","action":"start|stop","host":"PC_IP","port":5000}
+                # Ana döngü / callback işler; state'te tutulmaz.
+                pass
 
 
 class TcpJsonServer:
@@ -191,10 +195,16 @@ class TcpJsonServer:
         host: str = "0.0.0.0",
         port: int = 5005,
         state: Optional[MissionState] = None,
+        on_client_connect: Optional[Callable[[str], None]] = None,
+        on_client_disconnect: Optional[Callable[[str], None]] = None,
+        on_message: Optional[Callable[[dict[str, Any], str], None]] = None,
     ) -> None:
         self.host = host
         self.port = port
         self.state = state or MissionState()
+        self.on_client_connect = on_client_connect
+        self.on_client_disconnect = on_client_disconnect
+        self.on_message = on_message
         self._sock: Optional[socket.socket] = None
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
@@ -244,17 +254,25 @@ class TcpJsonServer:
         assert self._sock is not None
         while not self._stop.is_set():
             try:
-                conn, _addr = self._sock.accept()
+                conn, addr = self._sock.accept()
             except socket.timeout:
                 continue
             except OSError:
                 break
+            peer = addr[0] if addr else ""
             conn.settimeout(0.5)
             with self._clients_lock:
                 self._clients.append(conn)
-            threading.Thread(target=self._client_loop, args=(conn,), daemon=True).start()
+            if self.on_client_connect and peer:
+                try:
+                    self.on_client_connect(peer)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[WARN] on_client_connect: {exc}")
+            threading.Thread(
+                target=self._client_loop, args=(conn, peer), daemon=True
+            ).start()
 
-    def _client_loop(self, conn: socket.socket) -> None:
+    def _client_loop(self, conn: socket.socket, peer: str = "") -> None:
         buf = b""
         try:
             while not self._stop.is_set():
@@ -276,6 +294,11 @@ class TcpJsonServer:
                         continue
                     if isinstance(msg, dict):
                         self.state.apply_message(msg)
+                        if self.on_message:
+                            try:
+                                self.on_message(msg, peer)
+                            except Exception as exc:  # noqa: BLE001
+                                print(f"[WARN] on_message: {exc}")
         finally:
             with self._clients_lock:
                 if conn in self._clients:
@@ -284,3 +307,8 @@ class TcpJsonServer:
                 conn.close()
             except OSError:
                 pass
+            if self.on_client_disconnect and peer:
+                try:
+                    self.on_client_disconnect(peer)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[WARN] on_client_disconnect: {exc}")

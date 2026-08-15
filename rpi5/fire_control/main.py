@@ -13,6 +13,7 @@ from .pid import PID, PIDGains
 from .protocol import DownlinkCommand
 from .tcp_server import MissionState, TcpJsonServer
 from .uart_bridge import Stm32Bridge
+from .video_stream import VideoStreamer
 
 
 @dataclass
@@ -46,7 +47,27 @@ def run(args: argparse.Namespace) -> None:
     limits = Limits(engage_stable_s=args.engage_stable)
     optics: CameraOptics = GS_16MM
     state = MissionState(frame_w=args.frame_w, frame_h=args.frame_h)
-    tcp = TcpJsonServer(host=args.tcp_host, port=args.tcp_port, state=state)
+    # Kamera: Pi sürekli PC'ye UDP yayınlar. Arayüz sadece dinler / kapatır;
+    # Pi tarafı fire_control kapanana kadar akar.
+    video = VideoStreamer(
+        width=args.video_width,
+        height=args.video_height,
+        fps=args.video_fps,
+        port=args.video_port,
+        enabled=not args.no_video,
+    )
+
+    def _on_connect(peer: str) -> None:
+        # --video-host verilmediyse ilk TCP istemcisinin IP'sine yayın başlat
+        if video.enabled and not args.video_host and not video.running:
+            video.start(peer, args.video_port)
+
+    tcp = TcpJsonServer(
+        host=args.tcp_host,
+        port=args.tcp_port,
+        state=state,
+        on_client_connect=_on_connect,
+    )
     bridge = Stm32Bridge(port=args.stm_port, baud=args.baud)
 
     lidar = None
@@ -72,9 +93,24 @@ def run(args: argparse.Namespace) -> None:
     signal.signal(signal.SIGTERM, _stop)
 
     tcp.start()
+    if video.enabled and args.video_host:
+        video.start(args.video_host, args.video_port)
+
     print(f"[OK] TCP JSON : {args.tcp_host}:{args.tcp_port} (gokhisar uyumlu)")
     print(f"[OK] Frame merkezi: {args.frame_w}x{args.frame_h}")
     print(f"[OK] STM32 UART: {args.stm_port} @ {args.baud}")
+    if not video.enabled:
+        print("[OK] Video: kapalı (--no-video)")
+    elif args.video_host:
+        print(
+            f"[OK] Video sürekli → {args.video_host}:{args.video_port} "
+            f"({args.video_width}x{args.video_height}@{args.video_fps})"
+        )
+    else:
+        print(
+            f"[OK] Video: ilk TCP bağlanınca peer'e UDP:{args.video_port} "
+            "(sürekli; arayüz kapansa da akar)"
+        )
     print(
         f"[OK] Optik GS+16mm: HFOV≈{optics.hfov_deg:.1f}° VFOV≈{optics.vfov_deg:.1f}°"
     )
@@ -285,6 +321,7 @@ def run(args: argparse.Namespace) -> None:
             )
         except Exception:  # noqa: BLE001
             pass
+        video.stop()
         tcp.stop()
         bridge.close()
         if lidar:
@@ -309,9 +346,20 @@ def main() -> None:
     p.add_argument("--out-limit", type=float, default=4.0)
     p.add_argument("--invert-x", action="store_true")
     p.add_argument("--invert-y", action="store_true")
+    p.add_argument(
+        "--video-host",
+        default="",
+        help="PC IP — kamera UDP hedefi (boşsa ilk TCP istemcisine yayın)",
+    )
+    p.add_argument("--video-port", type=int, default=5000, help="PC UDP video portu")
+    p.add_argument("--video-width", type=int, default=1280)
+    p.add_argument("--video-height", type=int, default=720)
+    p.add_argument("--video-fps", type=int, default=20)
+    p.add_argument("--no-video", action="store_true", help="Kamera UDP akışını kapat")
     args = p.parse_args()
     if args.lidar_port.strip() == "":
         args.lidar_port = None
+    args.video_host = (args.video_host or "").strip()
     run(args)
 
 
