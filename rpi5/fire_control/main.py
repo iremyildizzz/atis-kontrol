@@ -93,8 +93,9 @@ def run(args: argparse.Namespace) -> None:
     signal.signal(signal.SIGTERM, _stop)
 
     tcp.start()
+    video_ok = False
     if video.enabled and args.video_host:
-        video.start(args.video_host, args.video_port)
+        video_ok = video.start(args.video_host, args.video_port)
 
     print(f"[OK] TCP JSON : {args.tcp_host}:{args.tcp_port} (gokhisar uyumlu)")
     print(f"[OK] Frame merkezi: {args.frame_w}x{args.frame_h}")
@@ -102,10 +103,16 @@ def run(args: argparse.Namespace) -> None:
     if not video.enabled:
         print("[OK] Video: kapalı (--no-video)")
     elif args.video_host:
-        print(
-            f"[OK] Video sürekli → {args.video_host}:{args.video_port} "
-            f"({args.video_width}x{args.video_height}@{args.video_fps})"
-        )
+        if video_ok:
+            print(
+                f"[OK] Video sürekli → {args.video_host}:{args.video_port} "
+                f"({args.video_width}x{args.video_height}@{args.video_fps})"
+            )
+        else:
+            print(
+                f"[HATA] Video başlamadı (hedef {args.video_host}:{args.video_port}). "
+                "rpicam-vid + gst-launch-1.0 kurulu mu?"
+            )
     else:
         print(
             f"[OK] Video: ilk TCP bağlanınca peer'e UDP:{args.video_port} "

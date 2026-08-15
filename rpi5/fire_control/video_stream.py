@@ -5,10 +5,29 @@ Pi sürekli yayınlar; arayüz yalnızca dinler / kendi tarafında kapatır.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import threading
 from typing import Optional
+
+_BIN_CANDIDATES = (
+    "/usr/bin",
+    "/usr/local/bin",
+    "/bin",
+)
+
+
+def _find_bin(*names: str) -> Optional[str]:
+    for name in names:
+        found = shutil.which(name)
+        if found:
+            return found
+        for folder in _BIN_CANDIDATES:
+            path = os.path.join(folder, name)
+            if os.path.isfile(path) and os.access(path, os.X_OK):
+                return path
+    return None
 
 
 class VideoStreamer:
@@ -28,8 +47,13 @@ class VideoStreamer:
         self._lock = threading.Lock()
         self._proc: Optional[subprocess.Popen] = None
         self._host: Optional[str] = None
-        self._rpicam = shutil.which("rpicam-vid") or shutil.which("libcamera-vid")
-        self._gst = shutil.which("gst-launch-1.0")
+        # PATH dar olabilir; bilinen konumlara da bak.
+        path = os.environ.get("PATH", "")
+        extra = ":".join(_BIN_CANDIDATES)
+        if extra not in path:
+            os.environ["PATH"] = f"{extra}:{path}" if path else extra
+        self._rpicam = _find_bin("rpicam-vid", "libcamera-vid")
+        self._gst = _find_bin("gst-launch-1.0")
 
     @property
     def running(self) -> bool:
@@ -46,8 +70,10 @@ class VideoStreamer:
             return False
         if not self._rpicam or not self._gst:
             print(
-                "[WARN] Video: rpicam-vid/libcamera-vid veya gst-launch-1.0 yok; "
-                "akış başlatılamadı"
+                "[WARN] Video: rpicam-vid/libcamera-vid veya gst-launch-1.0 yok.\n"
+                "  Pi'de dene: which rpicam-vid gst-launch-1.0\n"
+                "  Yoksa: sudo apt install -y gstreamer1.0-tools "
+                "gstreamer1.0-plugins-good gstreamer1.0-plugins-base"
             )
             return False
 
@@ -63,9 +89,9 @@ class VideoStreamer:
             self._stop_locked()
             self.port = out_port
             cmd = (
-                f'"{self._rpicam}" --width {self.width} --height {self.height} '
+                f"{self._rpicam} --width {self.width} --height {self.height} "
                 f"--framerate {self.fps} --codec mjpeg -t 0 -o - | "
-                f'"{self._gst}" -q fdsrc do-timestamp=true ! jpegparse ! '
+                f"{self._gst} -q fdsrc do-timestamp=true ! jpegparse ! "
                 f"rtpjpegpay pt=26 ! queue ! "
                 f"udpsink host={host} port={out_port} sync=false async=false "
                 f"buffer-size=262144"
@@ -83,7 +109,11 @@ class VideoStreamer:
                 self._host = None
                 return False
             self._host = host
-            print(f"[OK] Video UDP → {host}:{out_port} ({self.width}x{self.height}@{self.fps})")
+            print(
+                f"[OK] Video UDP → {host}:{out_port} "
+                f"({self.width}x{self.height}@{self.fps}) "
+                f"via {self._rpicam}"
+            )
             return True
 
     def stop(self) -> None:
