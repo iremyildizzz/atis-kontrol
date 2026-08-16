@@ -20,6 +20,26 @@ class PID:
         self._prev_err = 0.0
         self._has_prev = False
 
+    def set_gains(
+        self,
+        kp: float | None = None,
+        ki: float | None = None,
+        kd: float | None = None,
+        output_limit: float | None = None,
+        reset: bool = True,
+    ) -> None:
+        """Arayüzden gelen P/I/D güncellemesi."""
+        if kp is not None:
+            self.gains.kp = float(kp)
+        if ki is not None:
+            self.gains.ki = float(ki)
+        if kd is not None:
+            self.gains.kd = float(kd)
+        if output_limit is not None:
+            self.gains.output_limit = float(output_limit)
+        if reset:
+            self.reset()
+
     def reset(self) -> None:
         self._i = 0.0
         self._prev_err = 0.0
