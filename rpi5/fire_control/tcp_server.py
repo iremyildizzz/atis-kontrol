@@ -106,12 +106,28 @@ class MissionState:
                         self.engage_active = False
                         self.fire = False
                         self.arm = False
+                        # Manuel'e dönünce otonom hedefi bırak
+                        self.track_id = -1
+                        self.class_id = -1
+                        self.locked = False
+                        self.err_x = 0.0
+                        self.err_y = 0.0
+                        self.target_mono = 0.0
                 if "mode" in msg:
                     m = str(msg["mode"]).lower()
                     if m in ("otonom", "auto", "autonomous"):
                         self.mode = "otonom"
                     elif m in ("manuel", "manual"):
                         self.mode = "manuel"
+                        self.engage_active = False
+                        self.fire = False
+                        self.arm = False
+                        self.track_id = -1
+                        self.class_id = -1
+                        self.locked = False
+                        self.err_x = 0.0
+                        self.err_y = 0.0
+                        self.target_mono = 0.0
                 if "stage" in msg:
                     self.stage = int(msg["stage"])
 

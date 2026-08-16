@@ -211,14 +211,16 @@ def run(args: argparse.Namespace) -> None:
             err_pan_deg = 0.0
             err_tilt_deg = 0.0
 
-            # Aşama-1 / manuel absolute servo
-            if stage <= 1 and snap.mode == "manuel":
+            # MANUEL: yalnız klavye/dx-dy — PID yok
+            if snap.mode == "manuel":
                 if snap.pan_cmd_deg is not None:
                     pan = snap.pan_cmd_deg
                 if snap.tilt_cmd_deg is not None:
                     tilt = snap.tilt_cmd_deg
-            elif snap.mode == "otonom" or stage >= 2:
-                # Hedef 0.4 sn gelmezse bayat say — PID eski hatayı kovalamasın
+                pid_x.reset()
+                pid_y.reset()
+            # OTONOM aşama 2/3: balon/hedef merkez takibi (PID)
+            elif snap.mode == "otonom" and stage >= 2:
                 target_fresh = (
                     snap.target_mono > 0.0 and (now - snap.target_mono) < 0.4
                 )
@@ -228,7 +230,6 @@ def run(args: argparse.Namespace) -> None:
                     frame_w=snap.frame_w,
                     frame_h=snap.frame_h,
                 )
-                # Takip: kilit beklemeden (balon IFF'siz); kilit sadece ateş için
                 has_target = target_fresh and (snap.track_id >= 0 or snap.class_id >= 0)
                 if has_target or snap.engage_active:
                     sx = -1.0 if args.invert_x else 1.0
@@ -238,6 +239,9 @@ def run(args: argparse.Namespace) -> None:
                 else:
                     pid_x.reset()
                     pid_y.reset()
+            else:
+                pid_x.reset()
+                pid_y.reset()
 
             pan = clamp(pan, limits.pan_min, limits.pan_max)
             tilt = clamp(tilt, limits.tilt_min, limits.tilt_max)
