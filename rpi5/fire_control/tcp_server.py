@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import socket
 import threading
-import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
@@ -42,12 +41,6 @@ class MissionState:
     estop: bool = False
     frame_w: int = 1280
     frame_h: int = 720
-    target_mono: float = 0.0  # son target mesajı time.monotonic()
-    # Arayüz PID kutuları — dirty bayrağı ile ana döngü uygular
-    pid_kp: Optional[float] = None
-    pid_ki: Optional[float] = None
-    pid_kd: Optional[float] = None
-    pid_dirty: bool = False
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def snapshot(self) -> "MissionState":
@@ -74,11 +67,6 @@ class MissionState:
                 estop=self.estop,
                 frame_w=self.frame_w,
                 frame_h=self.frame_h,
-                target_mono=self.target_mono,
-                pid_kp=self.pid_kp,
-                pid_ki=self.pid_ki,
-                pid_kd=self.pid_kd,
-                pid_dirty=self.pid_dirty,
             )
 
     def consume_manual_delta(self) -> tuple[float, float]:
@@ -106,28 +94,12 @@ class MissionState:
                         self.engage_active = False
                         self.fire = False
                         self.arm = False
-                        # Manuel'e dönünce otonom hedefi bırak
-                        self.track_id = -1
-                        self.class_id = -1
-                        self.locked = False
-                        self.err_x = 0.0
-                        self.err_y = 0.0
-                        self.target_mono = 0.0
                 if "mode" in msg:
                     m = str(msg["mode"]).lower()
                     if m in ("otonom", "auto", "autonomous"):
                         self.mode = "otonom"
                     elif m in ("manuel", "manual"):
                         self.mode = "manuel"
-                        self.engage_active = False
-                        self.fire = False
-                        self.arm = False
-                        self.track_id = -1
-                        self.class_id = -1
-                        self.locked = False
-                        self.err_x = 0.0
-                        self.err_y = 0.0
-                        self.target_mono = 0.0
                 if "stage" in msg:
                     self.stage = int(msg["stage"])
 
@@ -141,7 +113,6 @@ class MissionState:
 
             elif t == "target":
                 # gokhisar: cx/cy mutlak merkez; biz err = cx - W/2
-                self.target_mono = time.monotonic()
                 if "cx" in msg and "cy" in msg:
                     cx = float(msg["cx"])
                     cy = float(msg["cy"])
@@ -212,23 +183,10 @@ class MissionState:
                 self.estop = False
             elif t == "stage":
                 self.stage = int(msg.get("stage", self.stage))
-            elif t == "pid":
-                # Arayüz: {"type":"pid","kp":..,"ki":..,"kd":..}
-                if "kp" in msg:
-                    self.pid_kp = float(msg["kp"])
-                if "ki" in msg:
-                    self.pid_ki = float(msg["ki"])
-                if "kd" in msg:
-                    self.pid_kd = float(msg["kd"])
-                self.pid_dirty = True
             elif t == "video":
                 # {"type":"video","action":"start|stop","host":"PC_IP","port":5000}
                 # Ana döngü / callback işler; state'te tutulmaz.
                 pass
-
-    def clear_pid_dirty(self) -> None:
-        with self.lock:
-            self.pid_dirty = False
 
 
 class TcpJsonServer:

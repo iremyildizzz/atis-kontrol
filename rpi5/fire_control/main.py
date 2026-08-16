@@ -80,22 +80,10 @@ def run(args: argparse.Namespace) -> None:
     pid_x = PID(PIDGains(kp=args.kp, ki=args.ki, kd=args.kd, output_limit=args.out_limit))
     pid_y = PID(PIDGains(kp=args.kp, ki=args.ki, kd=args.kd, output_limit=args.out_limit))
 
-    # Mantıksal açı (arayüz/PID). STM'ye giderken flip uygulanabilir.
-    pan = float(args.pan_home)
-    tilt = float(args.tilt_home)
+    pan = limits.home_deg
+    tilt = limits.home_deg
     in_range_since: float | None = None
     stop = False
-
-    def to_stm_tilt(logical: float) -> float:
-        """Mantıksal tilt → STM.
-
-        --tilt-offset: horn/montaj kayması (ör. +25 → home 90 iken STM 115).
-        --flip-tilt: ekseni ayna (180-tilt); home 90'da etkisi yok, yön için.
-        """
-        v = logical + float(args.tilt_offset)
-        if args.flip_tilt:
-            v = limits.tilt_max + limits.tilt_min - v
-        return clamp(v, limits.tilt_min, limits.tilt_max)
 
     def _stop(*_a: object) -> None:
         nonlocal stop
@@ -133,12 +121,6 @@ def run(args: argparse.Namespace) -> None:
     print(
         f"[OK] Optik GS+16mm: HFOV≈{optics.hfov_deg:.1f}° VFOV≈{optics.vfov_deg:.1f}°"
     )
-    print(
-        f"[OK] Servo home pan={args.pan_home:.1f}° tilt={args.tilt_home:.1f}° "
-        f"tilt_offset={args.tilt_offset:+.1f}° "
-        f"(STM tilt start={to_stm_tilt(tilt):.1f}°; "
-        f"flip={args.flip_tilt} invert_x={args.invert_x} invert_y={args.invert_y})"
-    )
 
     last_t = time.monotonic()
     last_status = 0.0
@@ -156,15 +138,6 @@ def run(args: argparse.Namespace) -> None:
             snap = state.snapshot()
             stage = int(snap.stage)
 
-            if snap.pid_dirty:
-                pid_x.set_gains(snap.pid_kp, snap.pid_ki, snap.pid_kd)
-                pid_y.set_gains(snap.pid_kp, snap.pid_ki, snap.pid_kd)
-                state.clear_pid_dirty()
-                print(
-                    f"[OK] PID arayüzden: kp={pid_x.gains.kp:.3f} "
-                    f"ki={pid_x.gains.ki:.3f} kd={pid_x.gains.kd:.3f}"
-                )
-
             home = False
             with state.lock:
                 if state.home:
@@ -175,7 +148,7 @@ def run(args: argparse.Namespace) -> None:
                 bridge.send(
                     DownlinkCommand(
                         pan_deg=pan,
-                        tilt_deg=to_stm_tilt(tilt),
+                        tilt_deg=tilt,
                         enable=False,
                         arm=False,
                         fire=False,
@@ -191,19 +164,16 @@ def run(args: argparse.Namespace) -> None:
                 continue
 
             if home:
-                pan = float(args.pan_home)
-                tilt = float(args.tilt_home)
+                pan = limits.home_deg
+                tilt = limits.home_deg
                 pid_x.reset()
                 pid_y.reset()
 
             # --- Manuel adım (gokhisar dx/dy) ---
             dpan, dtilt = state.consume_manual_delta()
             if dpan or dtilt:
-                sx = -1.0 if args.invert_x else 1.0
-                sy = -1.0 if args.invert_y else 1.0
-                scale = float(args.manual_scale)
-                pan += sx * dpan * scale
-                tilt += sy * dtilt * scale
+                pan += dpan
+                tilt += dtilt
                 pid_x.reset()
                 pid_y.reset()
                 stage = max(stage, 1)
@@ -211,27 +181,20 @@ def run(args: argparse.Namespace) -> None:
             err_pan_deg = 0.0
             err_tilt_deg = 0.0
 
-            # MANUEL: yalnız klavye/dx-dy — PID yok
-            if snap.mode == "manuel":
+            # Aşama-1 / manuel absolute servo
+            if stage <= 1 and snap.mode == "manuel":
                 if snap.pan_cmd_deg is not None:
                     pan = snap.pan_cmd_deg
                 if snap.tilt_cmd_deg is not None:
                     tilt = snap.tilt_cmd_deg
-                pid_x.reset()
-                pid_y.reset()
-            # OTONOM aşama 2/3: balon/hedef merkez takibi (PID)
-            elif snap.mode == "otonom" and stage >= 2:
-                target_fresh = (
-                    snap.target_mono > 0.0 and (now - snap.target_mono) < 0.4
-                )
+            elif snap.mode == "otonom" or stage >= 2:
                 err_pan_deg, err_tilt_deg = optics.pixel_offset_to_deg(
                     snap.err_x,
                     snap.err_y,
                     frame_w=snap.frame_w,
                     frame_h=snap.frame_h,
                 )
-                has_target = target_fresh and (snap.track_id >= 0 or snap.class_id >= 0)
-                if has_target or snap.engage_active:
+                if snap.locked or snap.engage_active:
                     sx = -1.0 if args.invert_x else 1.0
                     sy = -1.0 if args.invert_y else 1.0
                     pan += sx * pid_x.step(err_pan_deg, dt)
@@ -239,9 +202,6 @@ def run(args: argparse.Namespace) -> None:
                 else:
                     pid_x.reset()
                     pid_y.reset()
-            else:
-                pid_x.reset()
-                pid_y.reset()
 
             pan = clamp(pan, limits.pan_min, limits.pan_max)
             tilt = clamp(tilt, limits.tilt_min, limits.tilt_max)
@@ -307,7 +267,7 @@ def run(args: argparse.Namespace) -> None:
             sent = bridge.send(
                 DownlinkCommand(
                     pan_deg=pan,
-                    tilt_deg=to_stm_tilt(tilt),
+                    tilt_deg=tilt,
                     fire=want_fire,
                     arm=snap.arm and allow_iff,
                     heartbeat=True,
@@ -391,32 +351,8 @@ def main() -> None:
     p.add_argument("--ki", type=float, default=0.05)
     p.add_argument("--kd", type=float, default=0.08)
     p.add_argument("--out-limit", type=float, default=4.0)
-    p.add_argument("--invert-x", action="store_true", help="Manuel/PID pan yönünü ters çevir")
-    p.add_argument("--invert-y", action="store_true", help="Manuel/PID tilt yönünü ters çevir")
-    p.add_argument("--pan-home", type=float, default=90.0, help="Açılış pan açısı (0..180)")
-    p.add_argument(
-        "--tilt-home",
-        type=float,
-        default=90.0,
-        help="Açılış mantıksal tilt (arayüz ortası, genelde 90)",
-    )
-    p.add_argument(
-        "--tilt-offset",
-        type=float,
-        default=0.0,
-        help="STM tilt kayması (°). Ortada dursun diye +20/-20 dene; flip kullanma",
-    )
-    p.add_argument(
-        "--flip-tilt",
-        action="store_true",
-        help="Tilt eksenini ayna (180-tilt). Home=90'da konum değiştirmez",
-    )
-    p.add_argument(
-        "--manual-scale",
-        type=float,
-        default=1.0,
-        help="Manuel dx/dy çarpanı (5° az geliyorsa 2 veya 3)",
-    )
+    p.add_argument("--invert-x", action="store_true")
+    p.add_argument("--invert-y", action="store_true")
     p.add_argument(
         "--video-host",
         default="",
