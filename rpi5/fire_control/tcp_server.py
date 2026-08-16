@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import socket
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
@@ -41,6 +42,11 @@ class MissionState:
     estop: bool = False
     frame_w: int = 1280
     frame_h: int = 720
+    target_mono: float = 0.0
+    pid_kp: Optional[float] = None
+    pid_ki: Optional[float] = None
+    pid_kd: Optional[float] = None
+    pid_dirty: bool = False
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def snapshot(self) -> "MissionState":
@@ -67,6 +73,11 @@ class MissionState:
                 estop=self.estop,
                 frame_w=self.frame_w,
                 frame_h=self.frame_h,
+                target_mono=self.target_mono,
+                pid_kp=self.pid_kp,
+                pid_ki=self.pid_ki,
+                pid_kd=self.pid_kd,
+                pid_dirty=self.pid_dirty,
             )
 
     def consume_manual_delta(self) -> tuple[float, float]:
@@ -81,11 +92,22 @@ class MissionState:
             self.engage_active = False
             self.fire = False
 
+    def clear_pid_dirty(self) -> None:
+        with self.lock:
+            self.pid_dirty = False
+
+    def _clear_track(self) -> None:
+        self.track_id = -1
+        self.class_id = -1
+        self.locked = False
+        self.err_x = 0.0
+        self.err_y = 0.0
+        self.target_mono = 0.0
+
     def apply_message(self, msg: dict[str, Any]) -> None:
         t = msg.get("type", "")
         with self.lock:
             if t == "mode":
-                # gokhisar: {"type":"mode","autonomous":true}
                 if "autonomous" in msg:
                     self.mode = "otonom" if bool(msg["autonomous"]) else "manuel"
                     if bool(msg["autonomous"]) and self.stage < 2:
@@ -94,56 +116,58 @@ class MissionState:
                         self.engage_active = False
                         self.fire = False
                         self.arm = False
+                        self._clear_track()
                 if "mode" in msg:
                     m = str(msg["mode"]).lower()
                     if m in ("otonom", "auto", "autonomous"):
                         self.mode = "otonom"
                     elif m in ("manuel", "manual"):
                         self.mode = "manuel"
+                        self.engage_active = False
+                        self.fire = False
+                        self.arm = False
+                        self._clear_track()
                 if "stage" in msg:
                     self.stage = int(msg["stage"])
 
             elif t == "manual":
-                # gokhisar: {"type":"manual","dx":±5,"dy":±5} — açı adımı
                 self.mode = "manuel"
                 if self.stage == 0:
                     self.stage = 1
                 self.manual_dpan += float(msg.get("dx", 0.0))
                 self.manual_dtilt += float(msg.get("dy", 0.0))
-                print(
-                    f"[TCP] manual dx={msg.get('dx')} dy={msg.get('dy')} "
-                    f"acc=({self.manual_dpan:+.2f},{self.manual_dtilt:+.2f})"
-                )
 
             elif t == "target":
-                # gokhisar: cx/cy mutlak merkez; biz err = cx - W/2
-                if "cx" in msg and "cy" in msg:
-                    cx = float(msg["cx"])
-                    cy = float(msg["cy"])
-                    self.err_x = cx - (self.frame_w * 0.5)
-                    self.err_y = cy - (self.frame_h * 0.5)
-                if "err_x" in msg:
-                    self.err_x = float(msg["err_x"])
-                if "err_y" in msg:
-                    self.err_y = float(msg["err_y"])
-
-                if "class_id" in msg:
-                    self.class_id = int(msg["class_id"])
-                    if "class_name" not in msg and "class" not in msg:
-                        self.class_name = PEER_CLASS_NAMES.get(self.class_id, self.class_name)
-                if "class_name" in msg:
-                    self.class_name = str(msg["class_name"])
-                elif "class" in msg:
-                    self.class_name = str(msg["class"])
-
-                if "iff" in msg:
-                    self.iff = str(msg["iff"])
-                if "track_id" in msg:
-                    self.track_id = int(msg["track_id"])
-                if "locked" in msg:
-                    self.locked = bool(msg["locked"])
-                if "stage" in msg:
-                    self.stage = int(msg["stage"])
+                # KTR: hedef yalnız otonom 2+
+                if self.mode == "otonom" and self.stage >= 2:
+                    self.target_mono = time.monotonic()
+                    if "cx" in msg and "cy" in msg:
+                        cx = float(msg["cx"])
+                        cy = float(msg["cy"])
+                        self.err_x = cx - (self.frame_w * 0.5)
+                        self.err_y = cy - (self.frame_h * 0.5)
+                    if "err_x" in msg:
+                        self.err_x = float(msg["err_x"])
+                    if "err_y" in msg:
+                        self.err_y = float(msg["err_y"])
+                    if "class_id" in msg:
+                        self.class_id = int(msg["class_id"])
+                        if "class_name" not in msg and "class" not in msg:
+                            self.class_name = PEER_CLASS_NAMES.get(
+                                self.class_id, self.class_name
+                            )
+                    if "class_name" in msg:
+                        self.class_name = str(msg["class_name"])
+                    elif "class" in msg:
+                        self.class_name = str(msg["class"])
+                    if "iff" in msg:
+                        self.iff = str(msg["iff"])
+                    if "track_id" in msg:
+                        self.track_id = int(msg["track_id"])
+                    if "locked" in msg:
+                        self.locked = bool(msg["locked"])
+                    if "stage" in msg:
+                        self.stage = int(msg["stage"])
 
             elif t == "engage":
                 # gokhisar angajman talebi → arm+fire niyeti
@@ -187,9 +211,15 @@ class MissionState:
                 self.estop = False
             elif t == "stage":
                 self.stage = int(msg.get("stage", self.stage))
+            elif t == "pid":
+                if "kp" in msg:
+                    self.pid_kp = float(msg["kp"])
+                if "ki" in msg:
+                    self.pid_ki = float(msg["ki"])
+                if "kd" in msg:
+                    self.pid_kd = float(msg["kd"])
+                self.pid_dirty = True
             elif t == "video":
-                # {"type":"video","action":"start|stop","host":"PC_IP","port":5000}
-                # Ana döngü / callback işler; state'te tutulmaz.
                 pass
 
 

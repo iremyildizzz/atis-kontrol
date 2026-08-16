@@ -138,6 +138,17 @@ def run(args: argparse.Namespace) -> None:
             snap = state.snapshot()
             stage = int(snap.stage)
 
+            if snap.pid_dirty and snap.mode == "otonom" and stage >= 2:
+                pid_x.set_gains(snap.pid_kp, snap.pid_ki, snap.pid_kd)
+                pid_y.set_gains(snap.pid_kp, snap.pid_ki, snap.pid_kd)
+                state.clear_pid_dirty()
+                print(
+                    f"[OK] PID: kp={pid_x.gains.kp:.3f} "
+                    f"ki={pid_x.gains.ki:.3f} kd={pid_x.gains.kd:.3f}"
+                )
+            elif snap.pid_dirty:
+                state.clear_pid_dirty()
+
             home = False
             with state.lock:
                 if state.home:
@@ -169,33 +180,43 @@ def run(args: argparse.Namespace) -> None:
                 pid_x.reset()
                 pid_y.reset()
 
-            # --- Manuel adım (gokhisar dx/dy) — kip ne olursa uygula ---
-            dpan, dtilt = state.consume_manual_delta()
-            if dpan or dtilt:
-                pan += dpan
-                tilt += dtilt
-                pid_x.reset()
-                pid_y.reset()
-                stage = max(stage, 1)
-                print(f"[MANUEL] dx={dpan:+.2f} dy={dtilt:+.2f} → pan={pan:.1f} tilt={tilt:.1f}")
-
+            # KTR 4.3:
+            #   MANUEL → klavye dx/dy (PID yok)
+            #   OTONOM 2/3 → hedef merkezi + PID (klavye yok)
             err_pan_deg = 0.0
             err_tilt_deg = 0.0
 
-            # Aşama-1 / manuel absolute servo
-            if stage <= 1 and snap.mode == "manuel":
-                if snap.pan_cmd_deg is not None:
-                    pan = snap.pan_cmd_deg
-                if snap.tilt_cmd_deg is not None:
-                    tilt = snap.tilt_cmd_deg
-            elif snap.mode == "otonom" or stage >= 2:
+            if snap.mode == "manuel":
+                dpan, dtilt = state.consume_manual_delta()
+                if dpan or dtilt:
+                    pan += dpan
+                    tilt += dtilt
+                    stage = max(stage, 1)
+                with state.lock:
+                    if state.pan_cmd_deg is not None:
+                        pan = state.pan_cmd_deg
+                        state.pan_cmd_deg = None
+                    if state.tilt_cmd_deg is not None:
+                        tilt = state.tilt_cmd_deg
+                        state.tilt_cmd_deg = None
+                pid_x.reset()
+                pid_y.reset()
+
+            elif snap.mode == "otonom" and stage >= 2:
+                state.consume_manual_delta()
+                target_fresh = (
+                    snap.target_mono > 0.0 and (now - snap.target_mono) < 0.4
+                )
                 err_pan_deg, err_tilt_deg = optics.pixel_offset_to_deg(
                     snap.err_x,
                     snap.err_y,
                     frame_w=snap.frame_w,
                     frame_h=snap.frame_h,
                 )
-                if snap.locked or snap.engage_active:
+                has_target = target_fresh and (
+                    snap.track_id >= 0 or snap.class_id >= 0
+                )
+                if has_target or snap.engage_active:
                     sx = -1.0 if args.invert_x else 1.0
                     sy = -1.0 if args.invert_y else 1.0
                     pan += sx * pid_x.step(err_pan_deg, dt)
@@ -203,6 +224,11 @@ def run(args: argparse.Namespace) -> None:
                 else:
                     pid_x.reset()
                     pid_y.reset()
+
+            else:
+                state.consume_manual_delta()
+                pid_x.reset()
+                pid_y.reset()
 
             pan = clamp(pan, limits.pan_min, limits.pan_max)
             tilt = clamp(tilt, limits.tilt_min, limits.tilt_max)
