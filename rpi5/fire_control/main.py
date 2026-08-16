@@ -169,7 +169,7 @@ def run(args: argparse.Namespace) -> None:
                 pid_x.reset()
                 pid_y.reset()
 
-            # --- Manuel adım (gokhisar dx/dy) ---
+            # --- Manuel adım (gokhisar dx/dy) — kip ne olursa uygula ---
             dpan, dtilt = state.consume_manual_delta()
             if dpan or dtilt:
                 pan += dpan
@@ -177,6 +177,7 @@ def run(args: argparse.Namespace) -> None:
                 pid_x.reset()
                 pid_y.reset()
                 stage = max(stage, 1)
+                print(f"[MANUEL] dx={dpan:+.2f} dy={dtilt:+.2f} → pan={pan:.1f} tilt={tilt:.1f}")
 
             err_pan_deg = 0.0
             err_tilt_deg = 0.0
@@ -273,7 +274,7 @@ def run(args: argparse.Namespace) -> None:
                     heartbeat=True,
                     home=home,
                     safe=False,
-                    enable=snap.enable,
+                    enable=True,  # manuel/otonom: STM açı alsın
                     stage=stage,
                 )
             )

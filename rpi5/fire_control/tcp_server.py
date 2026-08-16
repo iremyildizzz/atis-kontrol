@@ -110,6 +110,10 @@ class MissionState:
                     self.stage = 1
                 self.manual_dpan += float(msg.get("dx", 0.0))
                 self.manual_dtilt += float(msg.get("dy", 0.0))
+                print(
+                    f"[TCP] manual dx={msg.get('dx')} dy={msg.get('dy')} "
+                    f"acc=({self.manual_dpan:+.2f},{self.manual_dtilt:+.2f})"
+                )
 
             elif t == "target":
                 # gokhisar: cx/cy mutlak merkez; biz err = cx - W/2
