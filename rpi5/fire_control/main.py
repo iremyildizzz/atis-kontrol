@@ -219,8 +219,17 @@ def run(args: argparse.Namespace) -> None:
                 if has_target or snap.engage_active:
                     sx = -1.0 if args.invert_x else 1.0
                     sy = -1.0 if args.invert_y else 1.0
-                    pan += sx * pid_x.step(err_pan_deg, dt)
-                    tilt += sy * pid_y.step(err_tilt_deg, dt)
+                    dpan = sx * pid_x.step(err_pan_deg, dt)
+                    dtilt = sy * pid_y.step(err_tilt_deg, dt)
+                    pan += dpan
+                    tilt += dtilt
+                    if now - last_status >= 0.25:
+                        print(
+                            f"[OTONOM] id={snap.track_id} "
+                            f"err=({err_pan_deg:+.2f},{err_tilt_deg:+.2f})° "
+                            f"Δ=({dpan:+.2f},{dtilt:+.2f}) "
+                            f"→ pan={pan:.1f} tilt={tilt:.1f}"
+                        )
                 else:
                     pid_x.reset()
                     pid_y.reset()
