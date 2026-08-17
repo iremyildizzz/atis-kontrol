@@ -18,12 +18,13 @@ from .video_stream import VideoStreamer
 
 @dataclass
 class Limits:
-    # gokhisar servo uzayı: 0…180°, orta = 90°
+    # gokhisar servo uzayı: 0…180°
     pan_min: float = 0.0
     pan_max: float = 180.0
     tilt_min: float = 0.0
     tilt_max: float = 180.0
-    home_deg: float = 90.0
+    home_pan_deg: float = 90.0
+    home_tilt_deg: float = 80.0  # UI elev −10°
     engage_err_deg: float = 0.35
     engage_stable_s: float = 1.0  # menzilde kararlı kalma
 
@@ -80,8 +81,8 @@ def run(args: argparse.Namespace) -> None:
     pid_x = PID(PIDGains(kp=args.kp, ki=args.ki, kd=args.kd, output_limit=args.out_limit))
     pid_y = PID(PIDGains(kp=args.kp, ki=args.ki, kd=args.kd, output_limit=args.out_limit))
 
-    pan = limits.home_deg
-    tilt = limits.home_deg
+    pan = limits.home_pan_deg
+    tilt = limits.home_tilt_deg
     in_range_since: float | None = None
     stop = False
 
@@ -175,8 +176,8 @@ def run(args: argparse.Namespace) -> None:
                 continue
 
             if home:
-                pan = limits.home_deg
-                tilt = limits.home_deg
+                pan = limits.home_pan_deg
+                tilt = limits.home_tilt_deg
                 pid_x.reset()
                 pid_y.reset()
 
