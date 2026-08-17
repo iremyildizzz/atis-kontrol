@@ -1,9 +1,4 @@
-"""PID — KTR Şekil 4.9 (RPi5).
-
-Çıkış: bu adımda eklenecek açı (°).
-output_limit: max hız (°/s) → adım tavanı = limit * dt.
-D: filtrelenmiş türev (ham Δe/dt tekmesi yok).
-"""
+"""PID controller — KTR Şekil 4.9 (RPi5 üzerinde çalışır)."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,13 +6,11 @@ from dataclasses import dataclass
 
 @dataclass
 class PIDGains:
-    # P/I/D varsayılan 0 — ekrandan gelir; output_limit sadece hız tavanı (°/s)
-    kp: float = 0.0
-    ki: float = 0.0
-    kd: float = 0.0
-    integral_limit: float = 50.0
-    output_limit: float = 80.0  # °/s güvenlik tavanı (panel P değil)
-    derivative_filter: float = 0.7
+    kp: float = 0.035
+    ki: float = 0.002
+    kd: float = 0.008
+    integral_limit: float = 200.0
+    output_limit: float = 8.0  # derece / adım
 
 
 class PID:
@@ -25,7 +18,6 @@ class PID:
         self.gains = gains or PIDGains()
         self._i = 0.0
         self._prev_err = 0.0
-        self._d_filtered = 0.0
         self._has_prev = False
 
     def set_gains(
@@ -36,6 +28,7 @@ class PID:
         output_limit: float | None = None,
         reset: bool = True,
     ) -> None:
+        """Arayüzden gelen P/I/D güncellemesi."""
         if kp is not None:
             self.gains.kp = float(kp)
         if ki is not None:
@@ -50,7 +43,6 @@ class PID:
     def reset(self) -> None:
         self._i = 0.0
         self._prev_err = 0.0
-        self._d_filtered = 0.0
         self._has_prev = False
 
     def step(self, error: float, dt: float) -> float:
@@ -63,16 +55,9 @@ class PID:
 
         d = 0.0
         if self._has_prev:
-            raw_d = (error - self._prev_err) / dt
-            alpha = max(0.0, min(0.95, g.derivative_filter))
-            self._d_filtered = (
-                alpha * self._d_filtered + (1.0 - alpha) * raw_d
-            )
-            d = self._d_filtered
+            d = (error - self._prev_err) / dt
         self._prev_err = error
         self._has_prev = True
 
         out = g.kp * error + g.ki * self._i + g.kd * d
-        # output_limit = °/s → bu döngüdeki max adım
-        max_step = g.output_limit * dt
-        return max(-max_step, min(max_step, out))
+        return max(-g.output_limit, min(g.output_limit, out))

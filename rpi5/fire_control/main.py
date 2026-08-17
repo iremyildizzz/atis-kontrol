@@ -121,12 +121,6 @@ def run(args: argparse.Namespace) -> None:
     print(
         f"[OK] Optik GS+16mm: HFOV≈{optics.hfov_deg:.1f}° VFOV≈{optics.vfov_deg:.1f}°"
     )
-    CONTROL_PERIOD = float(args.control_period)
-    print(
-        f"[OK] Kontrol {1.0 / CONTROL_PERIOD:.0f} Hz | "
-        f"target_fresh {args.target_fresh * 1000:.0f} ms | "
-        f"max hız {args.out_limit:.0f} °/s"
-    )
 
     last_t = time.monotonic()
     last_status = 0.0
@@ -134,11 +128,7 @@ def run(args: argparse.Namespace) -> None:
     try:
         while not stop:
             now = time.monotonic()
-            wait = CONTROL_PERIOD - (now - last_t)
-            if wait > 0.0:
-                time.sleep(wait)
-                now = time.monotonic()
-            dt = max(1e-3, min(0.05, now - last_t))
+            dt = max(1e-3, now - last_t)
             last_t = now
 
             bridge.poll()
@@ -181,6 +171,7 @@ def run(args: argparse.Namespace) -> None:
                 pid_x.reset()
                 pid_y.reset()
                 in_range_since = None
+                time.sleep(0.02)
                 continue
 
             if home:
@@ -191,7 +182,7 @@ def run(args: argparse.Namespace) -> None:
 
             # KTR 4.3:
             #   MANUEL → klavye dx/dy (PID yok)
-            #   OTONOM 2/3 → taze hedef + PID (engage eski hata ile sürmez)
+            #   OTONOM 2/3 → hedef merkezi + PID (klavye yok)
             err_pan_deg = 0.0
             err_tilt_deg = 0.0
 
@@ -213,21 +204,19 @@ def run(args: argparse.Namespace) -> None:
 
             elif snap.mode == "otonom" and stage >= 2:
                 state.consume_manual_delta()
-                # Hareketli hedef: eski koordinatı kullanma
                 target_fresh = (
-                    snap.target_mono > 0.0
-                    and (now - snap.target_mono) < float(args.target_fresh)
+                    snap.target_mono > 0.0 and (now - snap.target_mono) < 0.4
+                )
+                err_pan_deg, err_tilt_deg = optics.pixel_offset_to_deg(
+                    snap.err_x,
+                    snap.err_y,
+                    frame_w=snap.frame_w,
+                    frame_h=snap.frame_h,
                 )
                 has_target = target_fresh and (
                     snap.track_id >= 0 or snap.class_id >= 0
                 )
-                if has_target:
-                    err_pan_deg, err_tilt_deg = optics.pixel_offset_to_deg(
-                        snap.err_x,
-                        snap.err_y,
-                        frame_w=snap.frame_w,
-                        frame_h=snap.frame_h,
-                    )
+                if has_target or snap.engage_active:
                     sx = -1.0 if args.invert_x else 1.0
                     sy = -1.0 if args.invert_y else 1.0
                     dpan = sx * pid_x.step(err_pan_deg, dt)
@@ -365,6 +354,8 @@ def run(args: argparse.Namespace) -> None:
                     },
                 }
                 tcp.broadcast_status(status)
+
+            time.sleep(0.01)
     finally:
         try:
             bridge.send(
@@ -392,27 +383,10 @@ def main() -> None:
     p.add_argument("--lidar-port", default="/dev/ttyAMA1", help="TF02-PRO; boş = kapalı")
     p.add_argument("--lidar-baud", type=int, default=115200)
     p.add_argument("--engage-stable", type=float, default=1.0, help="Aşama-3 menzil kararlılık sn")
-    p.add_argument("--kp", type=float, default=0.0, help="P — ekrandan ayarla")
-    p.add_argument("--ki", type=float, default=0.0, help="I — ekrandan ayarla")
-    p.add_argument("--kd", type=float, default=0.0, help="D — ekrandan ayarla")
-    p.add_argument(
-        "--out-limit",
-        type=float,
-        default=80.0,
-        help="Max servo hızı (°/s), P/I/D değil",
-    )
-    p.add_argument(
-        "--control-period",
-        type=float,
-        default=0.02,
-        help="PID döngü periyodu (s); UART ~50 Hz ile hizalı",
-    )
-    p.add_argument(
-        "--target-fresh",
-        type=float,
-        default=0.15,
-        help="Hedef bayat eşiği (s)",
-    )
+    p.add_argument("--kp", type=float, default=0.55)
+    p.add_argument("--ki", type=float, default=0.05)
+    p.add_argument("--kd", type=float, default=0.08)
+    p.add_argument("--out-limit", type=float, default=4.0)
     p.add_argument("--invert-x", action="store_true")
     p.add_argument("--invert-y", action="store_true")
     p.add_argument(
