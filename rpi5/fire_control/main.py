@@ -121,28 +121,14 @@ def run(args: argparse.Namespace) -> None:
     print(
         f"[OK] Optik GS+16mm: HFOV≈{optics.hfov_deg:.1f}° VFOV≈{optics.vfov_deg:.1f}°"
     )
-    print(
-        f"[OK] Kontrol {1.0 / args.control_period:.0f} Hz | "
-        f"UART min {args.uart_period * 1000:.0f} ms | "
-        f"max hız {args.out_limit:.0f} °/s | "
-        f"target_fresh {args.target_fresh * 1000:.0f} ms"
-    )
 
-    control_period = float(args.control_period)
-    uart_period = float(args.uart_period)
-    target_fresh_s = float(args.target_fresh)
     last_t = time.monotonic()
     last_status = 0.0
 
     try:
         while not stop:
-            # PID ≈ UART (50 Hz): yeni hedef bilgisi yokken boşuna 100 Hz koşma
             now = time.monotonic()
-            wait = control_period - (now - last_t)
-            if wait > 0.0:
-                time.sleep(wait)
-                now = time.monotonic()
-            dt = max(1e-3, min(0.05, now - last_t))
+            dt = max(1e-3, now - last_t)
             last_t = now
 
             bridge.poll()
@@ -185,6 +171,7 @@ def run(args: argparse.Namespace) -> None:
                 pid_x.reset()
                 pid_y.reset()
                 in_range_since = None
+                time.sleep(0.02)
                 continue
 
             if home:
@@ -218,8 +205,7 @@ def run(args: argparse.Namespace) -> None:
             elif snap.mode == "otonom" and stage >= 2:
                 state.consume_manual_delta()
                 target_fresh = (
-                    snap.target_mono > 0.0
-                    and (now - snap.target_mono) < target_fresh_s
+                    snap.target_mono > 0.0 and (now - snap.target_mono) < 0.4
                 )
                 err_pan_deg, err_tilt_deg = optics.pixel_offset_to_deg(
                     snap.err_x,
@@ -242,7 +228,6 @@ def run(args: argparse.Namespace) -> None:
                             f"[OTONOM] id={snap.track_id} "
                             f"err=({err_pan_deg:+.2f},{err_tilt_deg:+.2f})° "
                             f"Δ=({dpan:+.2f},{dtilt:+.2f}) "
-                            f"v=({dpan / dt:+.0f},{dtilt / dt:+.0f})°/s "
                             f"→ pan={pan:.1f} tilt={tilt:.1f}"
                         )
                 else:
@@ -326,8 +311,7 @@ def run(args: argparse.Namespace) -> None:
                     safe=False,
                     enable=True,  # manuel/otonom: STM açı alsın
                     stage=stage,
-                ),
-                min_period_s=uart_period,
+                )
             )
 
             # Engage'i ancak FIRE frame gerçekten UART'a yazıldıysa kapat
@@ -370,6 +354,8 @@ def run(args: argparse.Namespace) -> None:
                     },
                 }
                 tcp.broadcast_status(status)
+
+            time.sleep(0.01)
     finally:
         try:
             bridge.send(
@@ -397,33 +383,10 @@ def main() -> None:
     p.add_argument("--lidar-port", default="/dev/ttyAMA1", help="TF02-PRO; boş = kapalı")
     p.add_argument("--lidar-baud", type=int, default=115200)
     p.add_argument("--engage-stable", type=float, default=1.0, help="Aşama-3 menzil kararlılık sn")
-    p.add_argument("--kp", type=float, default=0.25, help="P (panel birimi; @50 Hz)")
-    p.add_argument("--ki", type=float, default=0.0)
-    p.add_argument("--kd", type=float, default=0.05, help="D (filtrelenir)")
-    p.add_argument(
-        "--out-limit",
-        type=float,
-        default=100.0,
-        help="Max servo hızı (°/s), derece/adım değil",
-    )
-    p.add_argument(
-        "--control-period",
-        type=float,
-        default=0.02,
-        help="PID döngü periyodu (s); UART ile hizalı ~50 Hz",
-    )
-    p.add_argument(
-        "--uart-period",
-        type=float,
-        default=0.02,
-        help="STM32 komut min aralığı (s)",
-    )
-    p.add_argument(
-        "--target-fresh",
-        type=float,
-        default=0.15,
-        help="Hedef bayat sayılma eşiği (s)",
-    )
+    p.add_argument("--kp", type=float, default=0.55)
+    p.add_argument("--ki", type=float, default=0.05)
+    p.add_argument("--kd", type=float, default=0.08)
+    p.add_argument("--out-limit", type=float, default=4.0)
     p.add_argument("--invert-x", action="store_true")
     p.add_argument("--invert-y", action="store_true")
     p.add_argument(
