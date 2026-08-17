@@ -1,16 +1,27 @@
-"""PID controller — KTR Şekil 4.9 (RPi5 üzerinde çalışır)."""
+"""PID controller — KTR Şekil 4.9 (RPi5).
+
+Çıkış: bu kontrol adımında uygulanacak açı artımı (°).
+İç model: hız (°/s); `output_limit` fiziksel max hızdır.
+
+Panel Kp/Kd (eski “derece/adım @50 Hz”) → NOMINAL_DT ile °/s'e çevrilir,
+böylece döngü 40–60 Hz salınsa bile aynı P sayısı aynı fiziksel davranışı verir.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+# Kazançların tanımlandığı referans periyot (UART / kontrol ≈ 50 Hz)
+NOMINAL_DT = 0.02
+
 
 @dataclass
 class PIDGains:
-    kp: float = 0.035
-    ki: float = 0.002
-    kd: float = 0.008
+    kp: float = 0.25
+    ki: float = 0.0
+    kd: float = 0.05
     integral_limit: float = 200.0
-    output_limit: float = 8.0  # derece / adım
+    output_limit: float = 100.0  # °/s — fiziksel hız tavanı
+    derivative_filter: float = 0.7  # 1'e yakın = daha yumuşak D
 
 
 class PID:
@@ -19,6 +30,7 @@ class PID:
         self._i = 0.0
         self._prev_err = 0.0
         self._has_prev = False
+        self._d_filtered = 0.0
 
     def set_gains(
         self,
@@ -44,8 +56,10 @@ class PID:
         self._i = 0.0
         self._prev_err = 0.0
         self._has_prev = False
+        self._d_filtered = 0.0
 
     def step(self, error: float, dt: float) -> float:
+        """Hata (°) → bu adımda eklenecek açı (°)."""
         if dt <= 0.0:
             return 0.0
 
@@ -55,9 +69,15 @@ class PID:
 
         d = 0.0
         if self._has_prev:
-            d = (error - self._prev_err) / dt
+            raw_d = (error - self._prev_err) / dt
+            alpha = max(0.0, min(0.95, g.derivative_filter))
+            self._d_filtered = alpha * self._d_filtered + (1.0 - alpha) * raw_d
+            d = self._d_filtered
         self._prev_err = error
         self._has_prev = True
 
-        out = g.kp * error + g.ki * self._i + g.kd * d
-        return max(-g.output_limit, min(g.output_limit, out))
+        # Eski panel birimleri (derece/adım @50 Hz) → °/s
+        cmd = g.kp * error + g.ki * self._i + g.kd * d
+        rate = cmd / NOMINAL_DT
+        rate = max(-g.output_limit, min(g.output_limit, rate))
+        return rate * dt
