@@ -18,12 +18,13 @@ from .video_stream import VideoStreamer
 
 @dataclass
 class Limits:
-    # gokhisar servo uzayı: 0…180°, orta = 90°
+    # gokhisar servo uzayı: 0…180°; pan 90°, tilt home elevation -15° → 75°
     pan_min: float = 0.0
     pan_max: float = 180.0
     tilt_min: float = 0.0
     tilt_max: float = 180.0
-    home_deg: float = 90.0
+    home_pan_deg: float = 90.0
+    home_tilt_deg: float = 75.0
     engage_err_deg: float = 0.35
     engage_stable_s: float = 1.0  # menzilde kararlı kalma
 
@@ -44,7 +45,11 @@ def iff_allows_fire(stage: int, iff: str, engage_active: bool) -> bool:
 
 
 def run(args: argparse.Namespace) -> None:
-    limits = Limits(engage_stable_s=args.engage_stable)
+    limits = Limits(
+        engage_stable_s=args.engage_stable,
+        home_pan_deg=args.home_pan,
+        home_tilt_deg=args.home_tilt,
+    )
     optics: CameraOptics = GS_16MM
     state = MissionState(frame_w=args.frame_w, frame_h=args.frame_h)
     # Kamera: Pi sürekli PC'ye UDP yayınlar. Arayüz sadece dinler / kapatır;
@@ -77,13 +82,26 @@ def run(args: argparse.Namespace) -> None:
         except Exception as exc:  # noqa: BLE001
             print(f"[WARN] LiDAR açılamadı: {exc}")
 
-    pid_x = PID(PIDGains(kp=args.kp, ki=args.ki, kd=args.kd, output_limit=args.out_limit))
-    pid_y = PID(PIDGains(kp=args.kp, ki=args.ki, kd=args.kd, output_limit=args.out_limit))
+    pid_x = PID(PIDGains(
+        kp=args.kp, ki=args.ki, kd=args.kd, kv=args.kv,
+        output_limit=args.out_limit,
+    ))
+    pid_y = PID(PIDGains(
+        kp=args.kp, ki=args.ki, kd=args.kd, kv=args.kv,
+        output_limit=args.out_limit,
+    ))
 
-    pan = limits.home_deg
-    tilt = limits.home_deg
+    # STM telemetrisi gelmeden açı komutu yok — aksi halde home'a ani iniş olur
+    pan = limits.home_pan_deg
+    tilt = limits.home_tilt_deg
+    angles_synced = False
+    seeking_home = False
     in_range_since: float | None = None
     stop = False
+    control_hz = 50.0
+    control_dt = 1.0 / control_hz
+    lost_hold_s = 0.5
+    home_slew_dps = float(args.home_slew)  # soft home hızı (°/s)
 
     def _stop(*_a: object) -> None:
         nonlocal stop
@@ -99,6 +117,10 @@ def run(args: argparse.Namespace) -> None:
 
     print(f"[OK] TCP JSON : {args.tcp_host}:{args.tcp_port} (gokhisar uyumlu)")
     print(f"[OK] Frame merkezi: {args.frame_w}x{args.frame_h}")
+    print(
+        f"[OK] Home: pan={limits.home_pan_deg:.1f}° "
+        f"tilt={limits.home_tilt_deg:.1f}° (UI elev {limits.home_tilt_deg - 90.0:+.0f}°)"
+    )
     print(f"[OK] STM32 UART: {args.stm_port} @ {args.baud}")
     if not video.enabled:
         print("[OK] Video: kapalı (--no-video)")
@@ -128,7 +150,7 @@ def run(args: argparse.Namespace) -> None:
     try:
         while not stop:
             now = time.monotonic()
-            dt = max(1e-3, now - last_t)
+            dt = min(0.05, max(1e-3, now - last_t))
             last_t = now
 
             bridge.poll()
@@ -148,6 +170,22 @@ def run(args: argparse.Namespace) -> None:
                 )
             elif snap.pid_dirty:
                 state.clear_pid_dirty()
+
+            # STM gerçek açısını al; sonra soft-home (−15) — ani aşağı yok
+            if not angles_synced:
+                if bridge.last_telem is not None:
+                    pan = clamp(bridge.last_telem.pan_deg, limits.pan_min, limits.pan_max)
+                    tilt = clamp(bridge.last_telem.tilt_deg, limits.tilt_min, limits.tilt_max)
+                    angles_synced = True
+                    seeking_home = True
+                    print(
+                        f"[OK] Servo senkron: pan={pan:.1f} tilt={tilt:.1f} "
+                        f"→ soft home {limits.home_pan_deg:.0f}/{limits.home_tilt_deg:.0f} "
+                        f"(elev {limits.home_tilt_deg - 90.0:+.0f}°)"
+                    )
+                else:
+                    time.sleep(control_dt)
+                    continue
 
             home = False
             with state.lock:
@@ -171,14 +209,53 @@ def run(args: argparse.Namespace) -> None:
                 pid_x.reset()
                 pid_y.reset()
                 in_range_since = None
-                time.sleep(0.02)
+                time.sleep(control_dt)
                 continue
 
             if home:
-                pan = limits.home_deg
-                tilt = limits.home_deg
+                seeking_home = True
                 pid_x.reset()
                 pid_y.reset()
+
+            # Soft home: elevation −15'e yavaşça git (bir anda kafası inmesin)
+            if seeking_home:
+                step = home_slew_dps * dt
+                dpan = clamp(limits.home_pan_deg - pan, -step, step)
+                dtilt = clamp(limits.home_tilt_deg - tilt, -step, step)
+                pan += dpan
+                tilt += dtilt
+                if (
+                    abs(limits.home_pan_deg - pan) < 0.4
+                    and abs(limits.home_tilt_deg - tilt) < 0.4
+                ):
+                    pan = limits.home_pan_deg
+                    tilt = limits.home_tilt_deg
+                    seeking_home = False
+                    print(
+                        f"[OK] Soft home tamam: pan={pan:.1f} tilt={tilt:.1f} "
+                        f"(UI elev {tilt - 90.0:+.0f}°)"
+                    )
+                state.consume_manual_delta()
+                err_pan_deg = 0.0
+                err_tilt_deg = 0.0
+                # soft-home bitene kadar PID/manuel yok; açı komutu aşağıda gider
+                pan = clamp(pan, limits.pan_min, limits.pan_max)
+                tilt = clamp(tilt, limits.tilt_min, limits.tilt_max)
+                bridge.send(
+                    DownlinkCommand(
+                        pan_deg=pan,
+                        tilt_deg=tilt,
+                        fire=False,
+                        arm=False,
+                        heartbeat=True,
+                        home=False,
+                        safe=False,
+                        enable=True,
+                        stage=stage,
+                    )
+                )
+                time.sleep(control_dt)
+                continue
 
             # KTR 4.3:
             #   MANUEL → klavye dx/dy (PID yok)
@@ -204,9 +281,10 @@ def run(args: argparse.Namespace) -> None:
 
             elif snap.mode == "otonom" and stage >= 2:
                 state.consume_manual_delta()
-                target_fresh = (
-                    snap.target_mono > 0.0 and (now - snap.target_mono) < 0.4
+                target_age = (
+                    (now - snap.target_mono) if snap.target_mono > 0.0 else 1e9
                 )
+                target_fresh = target_age < 0.4
                 err_pan_deg, err_tilt_deg = optics.pixel_offset_to_deg(
                     snap.err_x,
                     snap.err_y,
@@ -219,18 +297,24 @@ def run(args: argparse.Namespace) -> None:
                 if has_target or snap.engage_active:
                     sx = -1.0 if args.invert_x else 1.0
                     sy = -1.0 if args.invert_y else 1.0
-                    dpan = sx * pid_x.step(err_pan_deg, dt)
-                    dtilt = sy * pid_y.step(err_tilt_deg, dt)
+                    e_pan = err_pan_deg
+                    e_tilt = err_tilt_deg * float(args.tilt_gain)
+                    rate_pan = sx * pid_x.step(e_pan, dt)
+                    rate_tilt = sy * pid_y.step(e_tilt, dt)
+                    tilt_cap = min(pid_y.gains.output_limit, args.tilt_rate_limit)
+                    rate_tilt = max(-tilt_cap, min(tilt_cap, rate_tilt))
+                    dpan = rate_pan * dt
+                    dtilt = rate_tilt * dt
                     pan += dpan
                     tilt += dtilt
                     if now - last_status >= 0.25:
                         print(
                             f"[OTONOM] id={snap.track_id} "
                             f"err=({err_pan_deg:+.2f},{err_tilt_deg:+.2f})° "
-                            f"Δ=({dpan:+.2f},{dtilt:+.2f}) "
+                            f"v=({rate_pan:+.1f},{rate_tilt:+.1f})°/s "
                             f"→ pan={pan:.1f} tilt={tilt:.1f}"
                         )
-                else:
+                elif target_age > lost_hold_s:
                     pid_x.reset()
                     pid_y.reset()
 
@@ -355,7 +439,7 @@ def run(args: argparse.Namespace) -> None:
                 }
                 tcp.broadcast_status(status)
 
-            time.sleep(0.01)
+            time.sleep(control_dt)
     finally:
         try:
             bridge.send(
@@ -383,10 +467,51 @@ def main() -> None:
     p.add_argument("--lidar-port", default="/dev/ttyAMA1", help="TF02-PRO; boş = kapalı")
     p.add_argument("--lidar-baud", type=int, default=115200)
     p.add_argument("--engage-stable", type=float, default=1.0, help="Aşama-3 menzil kararlılık sn")
-    p.add_argument("--kp", type=float, default=0.55)
-    p.add_argument("--ki", type=float, default=0.05)
-    p.add_argument("--kd", type=float, default=0.08)
-    p.add_argument("--out-limit", type=float, default=4.0)
+    p.add_argument("--kp", type=float, default=0.18, help="P — oransal")
+    p.add_argument("--ki", type=float, default=0.0, help="I — hareketli hedefte 0")
+    p.add_argument(
+        "--kd",
+        type=float,
+        default=0.004,
+        help="D — çok küçük + kodda LPF (0.15 gibi değerler fırlatır)",
+    )
+    p.add_argument(
+        "--kv",
+        type=float,
+        default=0.45,
+        help="Velocity feedforward — balon hızına akıcı uyum",
+    )
+    p.add_argument(
+        "--out-limit",
+        type=float,
+        default=14.0,
+        help="Maksimum pan hızı (°/s)",
+    )
+    p.add_argument(
+        "--tilt-rate-limit",
+        type=float,
+        default=10.0,
+        help="Elevation max hız (°/s)",
+    )
+    p.add_argument(
+        "--tilt-gain",
+        type=float,
+        default=0.75,
+        help="Elevation hata çarpanı",
+    )
+    p.add_argument("--home-pan", type=float, default=90.0, help="Başlangıç / home pan (°)")
+    p.add_argument(
+        "--home-tilt",
+        type=float,
+        default=75.0,
+        help="Başlangıç / home tilt (°) — UI Elevation -15 ⇒ 75",
+    )
+    p.add_argument(
+        "--home-slew",
+        type=float,
+        default=12.0,
+        help="Soft-home hızı (°/s) — açılışta ani iniş olmasın",
+    )
     p.add_argument("--invert-x", action="store_true")
     p.add_argument("--invert-y", action="store_true")
     p.add_argument(
