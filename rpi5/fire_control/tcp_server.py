@@ -40,8 +40,8 @@ class MissionState:
     enable: bool = True
     home: bool = False
     estop: bool = False
-    frame_w: int = 1280
-    frame_h: int = 720
+    frame_w: int = 640
+    frame_h: int = 480
     target_mono: float = 0.0
     pid_kp: Optional[float] = None
     pid_ki: Optional[float] = None

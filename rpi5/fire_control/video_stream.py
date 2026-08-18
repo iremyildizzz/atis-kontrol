@@ -33,9 +33,9 @@ def _find_bin(*names: str) -> Optional[str]:
 class VideoStreamer:
     def __init__(
         self,
-        width: int = 1280,
-        height: int = 720,
-        fps: int = 20,
+        width: int = 640,
+        height: int = 480,
+        fps: int = 30,
         port: int = 5000,
         enabled: bool = True,
     ) -> None:

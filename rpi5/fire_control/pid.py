@@ -1,7 +1,9 @@
 """PID controller — KTR Şekil 4.9 (RPi5 üzerinde çalışır).
 
-Yön aynı kalır; merkeze yakınken çıkış kısılır ki balonu geçmeden
-kilit bandında (±70 px) birkaç kare dursun.
+İki bölge (GPU / düşük lag için):
+  - Uzak: tam P → anlık yaklaşma
+  - Yakın: P kısılır, D frenler → geçmeden kilit bandında dur
+  - Ölü bant: çıkış 0
 """
 from __future__ import annotations
 
@@ -10,14 +12,17 @@ from dataclasses import dataclass
 
 @dataclass
 class PIDGains:
-    kp: float = 0.035
-    ki: float = 0.002
-    kd: float = 0.008
+    kp: float = 0.0
+    ki: float = 0.0
+    kd: float = 0.0
     integral_limit: float = 200.0
-    output_limit: float = 4.0  # derece / adım — aşırı geçmeyi kes
-    d_limit: float = 30.0  # ham türev tavanı (°/s)
-    near_err_deg: float = 1.5  # bu altında soft-land
-    near_scale: float = 0.45
+    output_limit: float = 5.0  # uzak mesafe için daha yüksek tavan
+    d_limit: float = 50.0
+    # Yaklaşma bandı: P yumuşar, D açık kalır
+    near_err_deg: float = 2.5
+    near_p_scale: float = 0.25  # yakında P'nin oranı (D tam)
+    near_out_scale: float = 0.40  # yakında adım tavanı
+    deadzone_deg: float = 0.28
 
 
 class PID:
@@ -57,8 +62,19 @@ class PID:
             return 0.0
 
         g = self.gains
-        self._i += error * dt
-        self._i = max(-g.integral_limit, min(g.integral_limit, self._i))
+        abs_e = abs(error)
+
+        if abs_e <= g.deadzone_deg:
+            self._i = 0.0
+            self._prev_err = error
+            self._has_prev = True
+            return 0.0
+
+        if g.ki != 0.0:
+            self._i += error * dt
+            self._i = max(-g.integral_limit, min(g.integral_limit, self._i))
+        else:
+            self._i = 0.0
 
         d = 0.0
         if self._has_prev:
@@ -67,12 +83,15 @@ class PID:
         self._prev_err = error
         self._has_prev = True
 
-        out = g.kp * error + g.ki * self._i + g.kd * d
+        # Uzak: tam P. Yakın: P düşür, D fren olarak kalsın.
+        if abs_e <= g.near_err_deg:
+            # Merkeze yaklaştıkça P lineer azalır (near_p_scale → 1.0 dışı)
+            t = abs_e / g.near_err_deg  # 0..1
+            p_scale = g.near_p_scale + (1.0 - g.near_p_scale) * t
+            lim = max(0.3, g.output_limit * g.near_out_scale)
+        else:
+            p_scale = 1.0
+            lim = g.output_limit
 
-        # Merkeze yakın: geçmeyi azalt → kilit için ortada kal
-        lim = g.output_limit
-        if abs(error) <= g.near_err_deg:
-            out *= g.near_scale
-            lim = max(0.4, g.output_limit * 0.5)
-
+        out = (g.kp * p_scale) * error + g.ki * self._i + g.kd * d
         return max(-lim, min(lim, out))
