@@ -10,6 +10,7 @@ from .engagement import distance_allows_fire, engage_range_for
 from .lidar_tf02 import TF02Pro
 from .optics import GS_16MM, CameraOptics
 from .pid import PID, PIDGains
+from .pid_presets import PRESETS, tilt_gravity_ff
 from .protocol import DownlinkCommand
 from .tcp_server import MissionState, TcpJsonServer
 from .uart_bridge import Stm32Bridge
@@ -189,6 +190,9 @@ def run(args: argparse.Namespace) -> None:
 
             if snap.mode == "manuel":
                 dpan, dtilt = state.consume_manual_delta()
+                # Pan tersi PC SERVO_INVERT_PAN'da; burada tekrar çevirme
+                if args.invert_y:
+                    dtilt = -dtilt
                 if dpan or dtilt:
                     pan += dpan
                     tilt += dtilt
@@ -218,9 +222,9 @@ def run(args: argparse.Namespace) -> None:
                     snap.track_id >= 0 or snap.class_id >= 0
                 )
                 if has_target or snap.engage_active:
-                    sx = -1.0 if args.invert_x else 1.0
+                    # Pan yönü PC SERVO_INVERT_PAN_AUTO ile ayarlanır — burada çevirme.
                     sy = -1.0 if args.invert_y else 1.0
-                    dpan = sx * pid_x.step(err_pan_deg, dt)
+                    dpan = pid_x.step(err_pan_deg, dt)
                     dtilt = sy * pid_y.step(err_tilt_deg, dt)
                     pan += dpan
                     tilt += dtilt
@@ -301,10 +305,16 @@ def run(args: argparse.Namespace) -> None:
                     and range_stable
                 )
 
+            # Yerçekimi FF: state'teki tilt birikmez; STM komutuna eklenir.
+            tilt_cmd = tilt_gravity_ff(
+                tilt, args.tilt_gravity_kg, args.tilt_gravity_mode
+            )
+            tilt_cmd = clamp(tilt_cmd, limits.tilt_min, limits.tilt_max)
+
             sent = bridge.send(
                 DownlinkCommand(
                     pan_deg=pan,
-                    tilt_deg=tilt,
+                    tilt_deg=tilt_cmd,
                     fire=want_fire,
                     arm=snap.arm and allow_iff,
                     heartbeat=True,
@@ -332,6 +342,8 @@ def run(args: argparse.Namespace) -> None:
                     "class_name": snap.class_name,
                     "pan_deg": round(pan, 2),
                     "tilt_deg": round(tilt, 2),
+                    "tilt_cmd_deg": round(tilt_cmd, 2),
+                    "tilt_gravity_ff": round(tilt_cmd - tilt, 3),
                     "err_px": {"x": round(snap.err_x, 1), "y": round(snap.err_y, 1)},
                     "err_deg": {"pan": round(err_pan_deg, 3), "tilt": round(err_tilt_deg, 3)},
                     "frame": [snap.frame_w, snap.frame_h],
@@ -384,11 +396,44 @@ def main() -> None:
     p.add_argument("--lidar-port", default="/dev/ttyAMA1", help="TF02-PRO; boş = kapalı")
     p.add_argument("--lidar-baud", type=int, default=115200)
     p.add_argument("--engage-stable", type=float, default=1.0, help="Aşama-3 menzil kararlılık sn")
-    p.add_argument("--kp", type=float, default=0.0)
-    p.add_argument("--ki", type=float, default=0.0)
-    p.add_argument("--kd", type=float, default=0.0)
+    p.add_argument(
+        "--pid-preset",
+        default="iyi_yatay",
+        choices=["none", *sorted(PRESETS.keys())],
+        help="Kayıtlı PID+FF: iyi_yatay (P=0.034 D=0.010). none=sadece CLI",
+    )
+    # Preset yoksa/override: iyi_yatay ile aynı varsayılanlar
+    p.add_argument("--kp", type=float, default=None)
+    p.add_argument("--ki", type=float, default=None)
+    p.add_argument("--kd", type=float, default=None)
     p.add_argument("--out-limit", type=float, default=5.0)
-    p.add_argument("--invert-x", action="store_true")
+    p.add_argument(
+        "--tilt-gravity-kg",
+        type=float,
+        default=None,
+        help="Tilt yerçekimi FF (derece). None=preset. 0=kapalı",
+    )
+    p.add_argument(
+        "--tilt-gravity-mode",
+        choices=("cos", "const"),
+        default=None,
+        help="cos: Kg*cos(elev); const: sabit Kg",
+    )
+    # Donanım pan tersi artık PC'de SERVO_INVERT_PAN ile yapılıyor.
+    # Çift terslememek için RPi varsayılanı kapalı.
+    p.add_argument(
+        "--invert-x",
+        dest="invert_x",
+        action="store_true",
+        default=False,
+        help="Yatay (pan) yönünü RPi'de ters çevir (PC invert varsa kullanma)",
+    )
+    p.add_argument(
+        "--no-invert-x",
+        dest="invert_x",
+        action="store_false",
+        help="Yatay invert'i kapat",
+    )
     p.add_argument("--invert-y", action="store_true")
     p.add_argument(
         "--video-host",
@@ -404,6 +449,36 @@ def main() -> None:
     if args.lidar_port.strip() == "":
         args.lidar_port = None
     args.video_host = (args.video_host or "").strip()
+
+    preset = PRESETS.get(args.pid_preset) if args.pid_preset != "none" else None
+    if preset is not None:
+        if args.kp is None:
+            args.kp = preset.kp
+        if args.ki is None:
+            args.ki = preset.ki
+        if args.kd is None:
+            args.kd = preset.kd
+        if args.tilt_gravity_kg is None:
+            args.tilt_gravity_kg = preset.tilt_gravity_kg
+        if args.tilt_gravity_mode is None:
+            args.tilt_gravity_mode = preset.tilt_gravity_mode
+        print(
+            f"[OK] PID preset={preset.name} "
+            f"P={args.kp:.3f} I={args.ki:.3f} D={args.kd:.3f} "
+            f"tilt_ff={args.tilt_gravity_kg:.2f}° ({args.tilt_gravity_mode})"
+        )
+    else:
+        if args.kp is None:
+            args.kp = 0.0
+        if args.ki is None:
+            args.ki = 0.0
+        if args.kd is None:
+            args.kd = 0.0
+        if args.tilt_gravity_kg is None:
+            args.tilt_gravity_kg = 0.0
+        if args.tilt_gravity_mode is None:
+            args.tilt_gravity_mode = "cos"
+
     run(args)
 
 
