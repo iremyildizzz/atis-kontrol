@@ -1,8 +1,7 @@
 """Kayıtlı PID ayarları.
 
-iyi_yatay — yatay kilit iyi (2026-08):
-  pan  P=0.034  I=0  D=0.010
-  tilt P daha düşük, D daha yüksek → dikey overshoot / kaçırmayı kes
+iyi_yatay — pan sert / tilt yumuşak+frenli (güncel deneme)
+dikey_ayar1 — bir önceki ayar: ortak P/D + gravity FF
 """
 from __future__ import annotations
 
@@ -38,8 +37,22 @@ IYI_YATAY = PidPreset(
     tilt_gravity_mode="cos",
 )
 
+# Ad: dikey_ayar1 — az önceki (ortak kazanç + gravity FF)
+DIKEY_AYAR1 = PidPreset(
+    name="dikey_ayar1",
+    kp=0.034,
+    ki=0.0,
+    kd=0.010,
+    kp_tilt=0.034,
+    ki_tilt=0.0,
+    kd_tilt=0.010,
+    tilt_gravity_kg=0.8,
+    tilt_gravity_mode="cos",
+)
+
 PRESETS: dict[str, PidPreset] = {
     IYI_YATAY.name: IYI_YATAY,
+    DIKEY_AYAR1.name: DIKEY_AYAR1,
 }
 
 
