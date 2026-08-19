@@ -1,7 +1,8 @@
 """Kayıtlı PID ayarları.
 
-iyi_yatay — pan sert / tilt yumuşak+frenli (güncel deneme)
-dikey_ayar1 — bir önceki ayar: ortak P/D + gravity FF
+en_iyi_dikey — son denenen / en iyi dikey (ayrı tilt kazancı)
+iyi_yatay — pan referansı (aynı aile)
+dikey_ayar1 — eski: ortak P/D + gravity FF
 """
 from __future__ import annotations
 
@@ -24,7 +25,20 @@ class PidPreset:
     tilt_gravity_mode: str = "cos"
 
 
-# Ad: iyi_yatay — pan sert, tilt yumuşak+frenli
+# Ad: en_iyi_dikey — son yapılan dikey ayar (pan iyi + tilt yumuşak/frenli)
+EN_IYI_DIKEY = PidPreset(
+    name="en_iyi_dikey",
+    kp=0.034,
+    ki=0.0,
+    kd=0.010,
+    kp_tilt=0.018,
+    ki_tilt=0.0,
+    kd_tilt=0.022,
+    tilt_gravity_kg=0.0,
+    tilt_gravity_mode="cos",
+)
+
+# Ad: iyi_yatay — pan referansı (en_iyi_dikey ile aynı kazanç ailesi)
 IYI_YATAY = PidPreset(
     name="iyi_yatay",
     kp=0.034,
@@ -51,6 +65,7 @@ DIKEY_AYAR1 = PidPreset(
 )
 
 PRESETS: dict[str, PidPreset] = {
+    EN_IYI_DIKEY.name: EN_IYI_DIKEY,
     IYI_YATAY.name: IYI_YATAY,
     DIKEY_AYAR1.name: DIKEY_AYAR1,
 }

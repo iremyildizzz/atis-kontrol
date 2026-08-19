@@ -430,17 +430,17 @@ def main() -> None:
     p.add_argument("--engage-stable", type=float, default=1.0, help="Aşama-3 menzil kararlılık sn")
     p.add_argument(
         "--pid-preset",
-        default="iyi_yatay",
+        default="en_iyi_dikey",
         choices=["none", *sorted(PRESETS.keys())],
-        help="Kayıtlı PID+FF: iyi_yatay (P=0.034 D=0.010). none=sadece CLI",
+        help="Kayıtlı PID: en_iyi_dikey (varsayılan), iyi_yatay, dikey_ayar1",
     )
-    # Preset yoksa/override: iyi_yatay ile aynı varsayılanlar
-    p.add_argument("--kp", type=float, default=None, help="Pan P (iyi_yatay=0.034)")
+    # Preset yoksa/override
+    p.add_argument("--kp", type=float, default=None, help="Pan P (en_iyi_dikey=0.034)")
     p.add_argument("--ki", type=float, default=None)
-    p.add_argument("--kd", type=float, default=None, help="Pan D (iyi_yatay=0.010)")
-    p.add_argument("--kp-tilt", type=float, default=None, help="Tilt P (iyi_yatay=0.018)")
+    p.add_argument("--kd", type=float, default=None, help="Pan D (en_iyi_dikey=0.010)")
+    p.add_argument("--kp-tilt", type=float, default=None, help="Tilt P (en_iyi_dikey=0.018)")
     p.add_argument("--ki-tilt", type=float, default=None)
-    p.add_argument("--kd-tilt", type=float, default=None, help="Tilt D (iyi_yatay=0.022)")
+    p.add_argument("--kd-tilt", type=float, default=None, help="Tilt D (en_iyi_dikey=0.022)")
     p.add_argument("--out-limit", type=float, default=5.0)
     p.add_argument(
         "--tilt-gravity-kg",
