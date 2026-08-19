@@ -10,7 +10,7 @@ from .engagement import distance_allows_fire, engage_range_for
 from .lidar_tf02 import TF02Pro
 from .optics import GS_16MM, CameraOptics
 from .pid import PID, PIDGains
-from .pid_presets import PRESETS, tilt_gravity_ff
+from .pid_presets import PRESETS, resolve_tilt_gains, tilt_gravity_ff
 from .protocol import DownlinkCommand
 from .tcp_server import MissionState, TcpJsonServer
 from .uart_bridge import Stm32Bridge
@@ -79,13 +79,45 @@ def run(args: argparse.Namespace) -> None:
         except Exception as exc:  # noqa: BLE001
             print(f"[WARN] LiDAR açılamadı: {exc}")
 
+    kp_t, ki_t, kd_t = resolve_tilt_gains(
+        args.kp, args.ki, args.kd, args.kp_tilt, args.ki_tilt, args.kd_tilt
+    )
     pid_x = PID(PIDGains(kp=args.kp, ki=args.ki, kd=args.kd, output_limit=args.out_limit))
-    pid_y = PID(PIDGains(kp=args.kp, ki=args.ki, kd=args.kd, output_limit=args.out_limit))
+    # Tilt: daha yumuşak P + daha sert D (dikey overshoot / kaçırma)
+    pid_y = PID(
+        PIDGains(
+            kp=kp_t,
+            ki=ki_t,
+            kd=kd_t,
+            output_limit=args.out_limit,
+            near_p_scale=0.18,
+            near_out_scale=0.30,
+            deadzone_deg=0.22,
+        )
+    )
 
     pan = limits.home_pan_deg
     tilt = limits.home_tilt_deg
     in_range_since: float | None = None
     stop = False
+
+    def _apply_pid_from_pc(kp: float, ki: float, kd: float) -> None:
+        """YKİ tek P/I/D gönderir; pan aynen, tilt preset oranıyla yumuşatılır."""
+        pid_x.set_gains(kp, ki, kd)
+        # Mutlak --kp-tilt verilmişse onu koru; yoksa pan'a göre oranla.
+        if args.kp_tilt is not None and args.kp and args.kp != 0.0:
+            scale_p = args.kp_tilt / args.kp
+            scale_d = (args.kd_tilt / args.kd) if args.kd and args.kd_tilt is not None else 2.2
+            pid_y.set_gains(kp * scale_p, ki, kd * scale_d)
+        else:
+            t_kp, t_ki, t_kd = resolve_tilt_gains(
+                kp, ki, kd, args.kp_tilt, args.ki_tilt, args.kd_tilt
+            )
+            pid_y.set_gains(t_kp, t_ki, t_kd)
+        print(
+            f"[OK] PID pan P={pid_x.gains.kp:.3f} D={pid_x.gains.kd:.3f} | "
+            f"tilt P={pid_y.gains.kp:.3f} D={pid_y.gains.kd:.3f}"
+        )
 
     def _stop(*_a: object) -> None:
         nonlocal stop
@@ -141,13 +173,13 @@ def run(args: argparse.Namespace) -> None:
             stage = int(snap.stage)
 
             if snap.pid_dirty and snap.mode == "otonom" and stage >= 2:
-                pid_x.set_gains(snap.pid_kp, snap.pid_ki, snap.pid_kd)
-                pid_y.set_gains(snap.pid_kp, snap.pid_ki, snap.pid_kd)
+                if snap.pid_kp is not None:
+                    _apply_pid_from_pc(
+                        float(snap.pid_kp),
+                        float(snap.pid_ki or 0.0),
+                        float(snap.pid_kd or 0.0),
+                    )
                 state.clear_pid_dirty()
-                print(
-                    f"[OK] PID: kp={pid_x.gains.kp:.3f} "
-                    f"ki={pid_x.gains.ki:.3f} kd={pid_x.gains.kd:.3f}"
-                )
             elif snap.pid_dirty:
                 state.clear_pid_dirty()
 
@@ -403,9 +435,12 @@ def main() -> None:
         help="Kayıtlı PID+FF: iyi_yatay (P=0.034 D=0.010). none=sadece CLI",
     )
     # Preset yoksa/override: iyi_yatay ile aynı varsayılanlar
-    p.add_argument("--kp", type=float, default=None)
+    p.add_argument("--kp", type=float, default=None, help="Pan P (iyi_yatay=0.034)")
     p.add_argument("--ki", type=float, default=None)
-    p.add_argument("--kd", type=float, default=None)
+    p.add_argument("--kd", type=float, default=None, help="Pan D (iyi_yatay=0.010)")
+    p.add_argument("--kp-tilt", type=float, default=None, help="Tilt P (iyi_yatay=0.018)")
+    p.add_argument("--ki-tilt", type=float, default=None)
+    p.add_argument("--kd-tilt", type=float, default=None, help="Tilt D (iyi_yatay=0.022)")
     p.add_argument("--out-limit", type=float, default=5.0)
     p.add_argument(
         "--tilt-gravity-kg",
@@ -458,14 +493,24 @@ def main() -> None:
             args.ki = preset.ki
         if args.kd is None:
             args.kd = preset.kd
+        if args.kp_tilt is None:
+            args.kp_tilt = preset.kp_tilt
+        if args.ki_tilt is None:
+            args.ki_tilt = preset.ki_tilt
+        if args.kd_tilt is None:
+            args.kd_tilt = preset.kd_tilt
         if args.tilt_gravity_kg is None:
             args.tilt_gravity_kg = preset.tilt_gravity_kg
         if args.tilt_gravity_mode is None:
             args.tilt_gravity_mode = preset.tilt_gravity_mode
+        t_kp, t_ki, t_kd = resolve_tilt_gains(
+            args.kp, args.ki, args.kd, args.kp_tilt, args.ki_tilt, args.kd_tilt
+        )
         print(
             f"[OK] PID preset={preset.name} "
-            f"P={args.kp:.3f} I={args.ki:.3f} D={args.kd:.3f} "
-            f"tilt_ff={args.tilt_gravity_kg:.2f}° ({args.tilt_gravity_mode})"
+            f"pan P={args.kp:.3f} D={args.kd:.3f} | "
+            f"tilt P={t_kp:.3f} D={t_kd:.3f} | "
+            f"tilt_ff={args.tilt_gravity_kg:.2f}°"
         )
     else:
         if args.kp is None:
