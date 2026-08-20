@@ -91,6 +91,7 @@ class MissionState:
         with self.lock:
             self.engage_active = False
             self.fire = False
+            self.arm = False
 
     def clear_pid_dirty(self) -> None:
         with self.lock:
