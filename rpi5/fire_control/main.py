@@ -99,6 +99,7 @@ def run(args: argparse.Namespace) -> None:
     pan = limits.home_pan_deg
     tilt = limits.home_tilt_deg
     in_range_since: float | None = None
+    fire_burst_left = 0
     stop = False
 
     def _apply_pid_from_pc(kp: float, ki: float, kd: float) -> None:
@@ -314,8 +315,25 @@ def run(args: argparse.Namespace) -> None:
 
             fire_intent = bool(snap.fire or snap.engage_active)
 
-            if stage <= 1 and snap.mode == "manuel":
+            # Engage gelince birkaç frame ARM+FIRE+ENABLE bas (STM rising-edge)
+            if (snap.engage_active or snap.fire) and fire_burst_left <= 0:
+                fire_burst_left = 12
+                print(
+                    f"[FIRE] engage track={snap.track_id} "
+                    f"stage={stage} → burst={fire_burst_left}"
+                )
+
+            if fire_burst_left > 0:
+                want_fire = True
+                arm_out = True
+                fire_burst_left -= 1
+                if fire_burst_left <= 0:
+                    state.clear_engage()
+                    in_range_since = None
+                    print("[FIRE] burst bitti")
+            elif stage <= 1 and snap.mode == "manuel":
                 want_fire = bool(fire_intent and snap.arm and snap.enable and allow_iff)
+                arm_out = bool(snap.arm and allow_iff)
             elif stage == 2:
                 want_fire = bool(
                     fire_intent
@@ -325,6 +343,7 @@ def run(args: argparse.Namespace) -> None:
                     and centered
                     and allow_iff
                 )
+                arm_out = bool(snap.arm and allow_iff)
             else:
                 want_fire = bool(
                     fire_intent
@@ -336,6 +355,7 @@ def run(args: argparse.Namespace) -> None:
                     and lidar_ok
                     and range_stable
                 )
+                arm_out = bool(snap.arm and allow_iff)
 
             # Yerçekimi FF: state'teki tilt birikmez; STM komutuna eklenir.
             tilt_cmd = tilt_gravity_ff(
@@ -348,19 +368,21 @@ def run(args: argparse.Namespace) -> None:
                     pan_deg=pan,
                     tilt_deg=tilt_cmd,
                     fire=want_fire,
-                    arm=snap.arm and allow_iff,
+                    arm=arm_out,
                     heartbeat=True,
                     home=home,
                     safe=False,
                     enable=True,  # manuel/otonom: STM açı alsın
                     stage=stage,
-                )
+                ),
+                min_period_s=0.0 if want_fire else 0.02,
             )
 
-            # Engage'i ancak FIRE frame gerçekten UART'a yazıldıysa kapat
             if want_fire and sent:
-                state.clear_engage()
-                in_range_since = None
+                print(
+                    f"[FIRE] UART fire=1 arm=1 enable=1 "
+                    f"pan={pan:.1f} tilt={tilt_cmd:.1f}"
+                )
 
             if now - last_status >= 0.2:
                 last_status = now
@@ -425,7 +447,11 @@ def main() -> None:
     p.add_argument("--frame-h", type=int, default=480, help="PC FRAME_HEIGHT (cy merkezi)")
     p.add_argument("--stm-port", default="/dev/ttyAMA0", help="STM32 UART")
     p.add_argument("--baud", type=int, default=115200)
-    p.add_argument("--lidar-port", default="/dev/ttyAMA1", help="TF02-PRO; boş = kapalı")
+    p.add_argument(
+        "--lidar-port",
+        default="/dev/ttyAMA4",
+        help="TF02-PRO UART4 (GPIO33); boş = kapalı",
+    )
     p.add_argument("--lidar-baud", type=int, default=115200)
     p.add_argument("--engage-stable", type=float, default=1.0, help="Aşama-3 menzil kararlılık sn")
     p.add_argument(

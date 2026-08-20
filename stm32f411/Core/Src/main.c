@@ -134,7 +134,7 @@ static void handle_command(const ProtoCommand *cmd)
 
     s_armed = (cmd->flags & FLAG_ARM) != 0;
 
-    /* ATES_ET: rising edge + ARM + ENABLE + açı OK */
+    /* ATES_ET: rising edge + ARM + ENABLE (açı limit ateşi engellemesin) */
     const bool fire_req = (cmd->flags & FLAG_FIRE) != 0;
     if (fire_req && !s_fire_edge_armed) {
         s_fire_edge_armed = true;
@@ -142,7 +142,6 @@ static void handle_command(const ProtoCommand *cmd)
             s_armed &&
             s_enabled &&
             !s_failsafe &&
-            !Servo_WasLimited() &&
             !Trigger_IsBusy();
 
         if (ok) {
