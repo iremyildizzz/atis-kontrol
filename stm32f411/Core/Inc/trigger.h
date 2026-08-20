@@ -8,7 +8,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define TRIGGER_PULSE_MS  250u  /* tek ATEŞ: kısa pulse, sonra MOSFET low */
+#define TRIGGER_PULSE_MS  180u  /* manuel ATEŞ: tek pulse, sonra MOSFET low */
 
 void Trigger_Init(void);
 void Trigger_Abort(void);

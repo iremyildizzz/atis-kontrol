@@ -99,12 +99,6 @@ def run(args: argparse.Namespace) -> None:
     pan = limits.home_pan_deg
     tilt = limits.home_tilt_deg
     in_range_since: float | None = None
-    # Tek atış: ATEŞ → kısa FIRE kenarı → STM pulse; sonra zorunlu kapalı
-    fire_until = 0.0
-    fire_cooldown_until = 0.0
-    fire_hold_s = 0.15  # UART'ta kısa FIRE (STM rising-edge); süre STM pulse'ta
-    fire_cooldown_s = 0.4
-    prev_engage = False
     stop = False
 
     def _apply_pid_from_pc(kp: float, ki: float, kd: float) -> None:
@@ -319,30 +313,33 @@ def run(args: argparse.Namespace) -> None:
             centered = abs(err_pan_deg) <= limits.engage_err_deg and abs(err_tilt_deg) <= limits.engage_err_deg
 
             fire_intent = bool(snap.fire or snap.engage_active)
-            engage_now = bool(snap.engage_active or snap.fire)
-            engage_rising = engage_now and not prev_engage
-            prev_engage = engage_now
 
-            # Yalnızca ATEŞ kenarı: bir kez ateşle, bitince kapat (sürekli tetik yok)
-            if engage_rising and now >= fire_cooldown_until:
-                fire_until = now + fire_hold_s
-                fire_cooldown_until = fire_until + fire_cooldown_s
-                state.clear_engage()
-                in_range_since = None
-                print(f"[FIRE] tek atış {fire_hold_s*1000:.0f}ms (sonra kapalı)")
-            elif engage_now and now < fire_cooldown_until:
-                # Basılı/tekrar engage → yoksay, kuyruğu temizle
-                state.clear_engage()
-
-            if now < fire_until:
+            # Eski / basit: engage bir kez FIRE, STM 180 ms pulse, sonra kapalı
+            if stage <= 1 and snap.mode == "manuel":
+                want_fire = bool(fire_intent and snap.arm and snap.enable)
+            elif snap.engage_active or snap.fire:
+                # Manuel dışı ATEŞ düğmesi: kapı yok, tek frame
                 want_fire = True
-                arm_out = True
+            elif stage == 2:
+                want_fire = bool(
+                    fire_intent
+                    and snap.arm
+                    and snap.enable
+                    and (snap.locked or snap.engage_active)
+                    and centered
+                    and allow_iff
+                )
             else:
-                # Ateş penceresi dışı: asla FIRE=1 (eski arm/engage sızıntısı olmasın)
-                want_fire = False
-                arm_out = False
-                if fire_intent:
-                    state.clear_engage()
+                want_fire = bool(
+                    fire_intent
+                    and snap.arm
+                    and snap.enable
+                    and (snap.locked or snap.engage_active)
+                    and centered
+                    and allow_iff
+                    and lidar_ok
+                    and range_stable
+                )
 
             # Yerçekimi FF: state'teki tilt birikmez; STM komutuna eklenir.
             tilt_cmd = tilt_gravity_ff(
@@ -355,21 +352,21 @@ def run(args: argparse.Namespace) -> None:
                     pan_deg=pan,
                     tilt_deg=tilt_cmd,
                     fire=want_fire,
-                    arm=arm_out,
+                    arm=bool(snap.arm or want_fire),
                     heartbeat=True,
                     home=home,
                     safe=False,
-                    enable=True,  # manuel/otonom: STM açı alsın
+                    enable=True,
                     stage=stage,
                 ),
                 min_period_s=0.0 if want_fire else 0.02,
             )
 
-            if want_fire and sent and (fire_until - now) > fire_hold_s - 0.04:
-                print("[FIRE] UART fire=1 (kenar)")
-            if (not want_fire) and fire_until > 0 and now >= fire_until and now < fire_until + 0.05:
-                print("[FIRE] kapandı")
-                fire_until = 0.0
+            # Tek frame yeter (STM rising-edge + 180 ms pulse) — hemen temizle
+            if want_fire and sent:
+                print("[FIRE] tek pulse gönderildi (STM ~180ms)")
+                state.clear_engage()
+                in_range_since = None
 
             if now - last_status >= 0.2:
                 last_status = now
