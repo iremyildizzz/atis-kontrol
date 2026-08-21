@@ -331,21 +331,20 @@ def run(args: argparse.Namespace) -> None:
             allow_iff = iff_allows_fire(stage, snap.iff, snap.engage_active)
             centered = abs(err_pan_deg) <= limits.engage_err_deg and abs(err_tilt_deg) <= limits.engage_err_deg
 
-            # YKİ ATEŞ: yalnız engage oneshot — stage2/3 otomatik ateş YOK (röle kilitlenmesin)
+            # YKİ ATEŞ: tek UART kenarı — while ile 180 ms paket basma YOK
+            # (kuyrukta biriken FIRE=1 STM'i kilitliyordu)
             ui_oneshot = bool(snap.fire or snap.engage_active)
             if ui_oneshot:
                 state.clear_engage()
                 in_range_since = None
 
-            # Yerçekimi FF: state'teki tilt birikmez; STM komutuna eklenir.
             tilt_cmd = tilt_gravity_ff(
                 tilt, args.tilt_gravity_kg, args.tilt_gravity_mode
             )
             tilt_cmd = clamp(tilt_cmd, limits.tilt_min, limits.tilt_max)
 
             if ui_oneshot:
-                # STM artık FIRE seviyesine bakıyor: ~180 ms HIGH, sonra LOW
-                print("[FIRE] oneshot: FIRE=1 ~180ms → FIRE=0")
+                print("[FIRE] oneshot: tek FIRE=1 → FIRE=0 (STM ~200ms pulse)")
                 on_cmd = DownlinkCommand(
                     pan_deg=pan,
                     tilt_deg=tilt_cmd,
@@ -369,24 +368,9 @@ def run(args: argparse.Namespace) -> None:
                     stage=stage,
                 )
                 bridge.send(on_cmd, min_period_s=0.0)
-                t_end = time.monotonic() + 0.18
-                while time.monotonic() < t_end:
-                    bridge.send(on_cmd, min_period_s=0.0)
-                    bridge.poll()
-                    time.sleep(0.01)
-                for _ in range(5):
+                for _ in range(3):
                     bridge.send(off_cmd, min_period_s=0.0)
-                    time.sleep(0.002)
-                print("[FIRE] oneshot bitti (FIRE=0)")
-                # Teşhis: STM hâlâ BUSY ise chip'te ESKİ firmware var
-                time.sleep(0.05)
-                bridge.poll()
-                tel = bridge.last_telem
-                if tel is not None and bool(getattr(tel, "busy", False)):
-                    print(
-                        "[FIRE][HATA] STM hâlâ BUSY — hss'e YENİ firmware "
-                        "flash edilmemiş (FIRE=0 pini düşürmüyor)!"
-                    )
+                print("[FIRE] oneshot gitti — pulse STM'de ~200ms")
                 want_fire = False
             else:
                 want_fire = False

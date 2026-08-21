@@ -31,7 +31,7 @@ void Trigger_Abort(void)
 
 void Trigger_RequestFire(void)
 {
-    if (Trigger_IsBusy()) {
+    if (s_pulse_deadline_ms != 0u) {
         return;
     }
     s_pulse_deadline_ms = HAL_GetTick() + (uint32_t)TRIGGER_PULSE_MS;
@@ -45,11 +45,11 @@ void Trigger_RequestFire(void)
 void Trigger_Service(void)
 {
     if (s_pulse_deadline_ms == 0u) {
-        HAL_GPIO_WritePin(TRIG_GPIO_PORT, TRIG_GPIO_PIN, GPIO_PIN_RESET);
         return;
     }
     if ((int32_t)(HAL_GetTick() - s_pulse_deadline_ms) >= 0) {
-        Trigger_Abort();
+        s_pulse_deadline_ms = 0;
+        HAL_GPIO_WritePin(TRIG_GPIO_PORT, TRIG_GPIO_PIN, GPIO_PIN_RESET);
     }
 }
 

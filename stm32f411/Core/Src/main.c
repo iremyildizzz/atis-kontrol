@@ -135,23 +135,19 @@ static void handle_command(const ProtoCommand *cmd)
 
     s_armed = (cmd->flags & FLAG_ARM) != 0;
 
-    /* FIRE=1 → HIGH (max); FIRE=0 → anında LOW (eski fw bunu yapmıyordu) */
-    const bool fire_req = (cmd->flags & FLAG_FIRE) != 0;
-    if (fire_req) {
-        const bool ok = s_armed && s_enabled && !s_failsafe;
-        if (ok) {
-            if (!Trigger_IsBusy()) {
+    /* Rising-edge: FIRE=0 Abort etmez; pulse'u Trigger_Service bitirir */
+    {
+        static bool s_last_fire_req = false;
+        const bool fire_req = (cmd->flags & FLAG_FIRE) != 0;
+        if (fire_req && !s_last_fire_req) {
+            const bool ok =
+                s_armed && s_enabled && !s_failsafe && !Trigger_IsBusy();
+            if (ok) {
                 Trigger_RequestFire();
                 send_telemetry(true);
             }
-            Trigger_Service();
-        } else {
-            Trigger_Abort();
         }
-    } else {
-        Trigger_Abort();
-        s_fire_edge_armed = false;
-        s_fire_busy_frames = 0;
+        s_last_fire_req = fire_req;
     }
 }
 
@@ -225,7 +221,6 @@ int main(void)
                 }
             } else {
                 high_since = 0u;
-                Trigger_Abort();
             }
         }
 
