@@ -1,7 +1,7 @@
-"""RPi kamera → PC UDP RTP/JPEG video akışı.
+"""RPi kamera → PC UDP RTP/JPEG video akışı (low-latency + OTO LAG flash).
 
-Arayüz (GStreamerVideoWorker) port 5000'de RTP/JPEG bekler.
-Pi sürekli yayınlar; arayüz yalnızca dinler / kendi tarafında kapatır.
+Normal akış: rpicam | gst → udpsink (queue yok).
+OTO LAG: ayrı kısa magenta videotestsrc burst aynı UDP portuna.
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def _find_bin(*names: str) -> Optional[str]:
             return found
         for folder in _BIN_CANDIDATES:
             path = os.path.join(folder, name)
-            if os.path.isfile(path) and os.access(path, os.X_OK):
+            if os.path.isfile(path) and os.path.access(path, os.X_OK):
                 return path
     return None
 
@@ -47,33 +47,58 @@ class VideoStreamer:
         self._lock = threading.Lock()
         self._proc: Optional[subprocess.Popen] = None
         self._host: Optional[str] = None
-        # PATH dar olabilir; bilinen konumlara da bak.
         path = os.environ.get("PATH", "")
         extra = ":".join(_BIN_CANDIDATES)
         if extra not in path:
             os.environ["PATH"] = f"{extra}:{path}" if path else extra
         self._rpicam = _find_bin("rpicam-vid", "libcamera-vid")
-        self._gst = _find_bin("gst-launch-1.0")
+        self._gst_bin = _find_bin("gst-launch-1.0")
 
     @property
     def running(self) -> bool:
         with self._lock:
             return self._proc is not None and self._proc.poll() is None
 
+    def request_flash(self, frames: int = 10) -> None:
+        """PC OTO LAG: magenta kareleri doğrudan UDP'ye bas (insan yok)."""
+        with self._lock:
+            host = self._host
+            port = self.port
+            gst = self._gst_bin
+            w, h, fps = self.width, self.height, self.fps
+        if not host or not gst:
+            print("[WARN] lag-flash: video yayını yok / gst yok")
+            return
+        n = max(4, min(30, int(frames)))
+        # solid magenta (ARGB) — odada net görünür
+        cmd = (
+            f"{gst} -q videotestsrc num-buffers={n} pattern=solid-color "
+            f"foreground-color=0xffff00ff ! "
+            f"video/x-raw,width={w},height={h},framerate={fps}/1 ! "
+            f"jpegenc quality=55 ! rtpjpegpay pt=26 ! "
+            f"udpsink host={host} port={port} sync=false async=false"
+        )
+        print(f"[OK] lag-flash UDP burst → {host}:{port} ({n} kare magenta)")
+
+        def _run() -> None:
+            try:
+                subprocess.run(cmd, shell=True, timeout=6, check=False)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[WARN] lag-flash burst hata: {exc}")
+
+        threading.Thread(target=_run, name="lag-flash", daemon=True).start()
+
     def start(self, host: str, port: Optional[int] = None) -> bool:
-        """PC IP'sine UDP akışı başlat. Aynı hedefe zaten gidiyorsa no-op."""
         if not self.enabled:
             return False
         host = (host or "").strip()
         if not host or host.startswith("127."):
             print(f"[WARN] Video: geçersiz hedef host={host!r}")
             return False
-        if not self._rpicam or not self._gst:
+        if not self._rpicam or not self._gst_bin:
             print(
                 "[WARN] Video: rpicam-vid/libcamera-vid veya gst-launch-1.0 yok.\n"
-                "  Pi'de dene: which rpicam-vid gst-launch-1.0\n"
-                "  Yoksa: sudo apt install -y gstreamer1.0-tools "
-                "gstreamer1.0-plugins-good gstreamer1.0-plugins-base"
+                "  Pi'de dene: which rpicam-vid gst-launch-1.0"
             )
             return False
 
@@ -90,11 +115,12 @@ class VideoStreamer:
             self.port = out_port
             cmd = (
                 f"{self._rpicam} --width {self.width} --height {self.height} "
-                f"--framerate {self.fps} --codec mjpeg -t 0 -o - | "
-                f"{self._gst} -q fdsrc do-timestamp=true ! jpegparse ! "
-                f"rtpjpegpay pt=26 ! queue ! "
+                f"--framerate {self.fps} --codec mjpeg --nopreview "
+                f"--buffer-count 2 -t 0 -o - | "
+                f"{self._gst_bin} -q fdsrc do-timestamp=false ! jpegparse ! "
+                f"rtpjpegpay pt=26 ! "
                 f"udpsink host={host} port={out_port} sync=false async=false "
-                f"buffer-size=262144"
+                f"max-lateness=0 qos=true buffer-size=131072"
             )
             try:
                 self._proc = subprocess.Popen(
@@ -111,8 +137,7 @@ class VideoStreamer:
             self._host = host
             print(
                 f"[OK] Video UDP → {host}:{out_port} "
-                f"({self.width}x{self.height}@{self.fps}) "
-                f"via {self._rpicam}"
+                f"({self.width}x{self.height}@{self.fps}) low-latency"
             )
             return True
 

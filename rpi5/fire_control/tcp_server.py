@@ -222,6 +222,9 @@ class MissionState:
                 self.pid_dirty = True
             elif t == "video":
                 pass
+            elif t == "lag_flash":
+                # PC auto-lag: video beyaz flash (MissionState işi değil; on_message)
+                pass
 
 
 class TcpJsonServer:

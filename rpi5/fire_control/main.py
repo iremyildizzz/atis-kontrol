@@ -64,11 +64,18 @@ def run(args: argparse.Namespace) -> None:
         if video.enabled and not args.video_host and not video.running:
             video.start(peer, args.video_port)
 
+    def _on_message(msg: dict, _peer: str) -> None:
+        if msg.get("type") == "lag_flash":
+            n = int(msg.get("frames", 8) or 8)
+            video.request_flash(frames=max(4, min(16, n)))
+            print("[OK] lag_flash TCP alındı → video flash")
+
     tcp = TcpJsonServer(
         host=args.tcp_host,
         port=args.tcp_port,
         state=state,
         on_client_connect=_on_connect,
+        on_message=_on_message,
     )
     bridge = Stm32Bridge(port=args.stm_port, baud=args.baud)
 
@@ -82,7 +89,19 @@ def run(args: argparse.Namespace) -> None:
     kp_t, ki_t, kd_t = resolve_tilt_gains(
         args.kp, args.ki, args.kd, args.kp_tilt, args.ki_tilt, args.kd_tilt
     )
-    pid_x = PID(PIDGains(kp=args.kp, ki=args.ki, kd=args.kd, output_limit=args.out_limit))
+    # Pan: soft-land gevşek — geç / yapışkan yatay cevabı azalt
+    pid_x = PID(
+        PIDGains(
+            kp=args.kp,
+            ki=args.ki,
+            kd=args.kd,
+            output_limit=args.out_limit,
+            near_p_scale=0.45,
+            near_out_scale=0.60,
+            deadzone_deg=0.15,
+            near_err_deg=2.0,
+        )
+    )
     # Tilt: daha yumuşak P + daha sert D (dikey overshoot / kaçırma)
     pid_y = PID(
         PIDGains(
@@ -362,11 +381,25 @@ def run(args: argparse.Namespace) -> None:
                 min_period_s=0.0 if want_fire else 0.02,
             )
 
-            # Tek frame yeter (STM rising-edge + 180 ms pulse) — hemen temizle
+            # Tek frame yeter (STM rising-edge + 180 ms pulse) — hemen temizle + FIRE=0
             if want_fire and sent:
                 print("[FIRE] tek pulse gönderildi (STM ~180ms)")
                 state.clear_engage()
                 in_range_since = None
+                bridge.send(
+                    DownlinkCommand(
+                        pan_deg=pan,
+                        tilt_deg=tilt_cmd,
+                        fire=False,
+                        arm=bool(snap.arm),
+                        heartbeat=True,
+                        home=False,
+                        safe=False,
+                        enable=True,
+                        stage=stage,
+                    ),
+                    min_period_s=0.0,
+                )
 
             if now - last_status >= 0.2:
                 last_status = now
@@ -445,13 +478,13 @@ def main() -> None:
         help="Kayıtlı PID: en_iyi_dikey (varsayılan), iyi_yatay, dikey_ayar1",
     )
     # Preset yoksa/override
-    p.add_argument("--kp", type=float, default=None, help="Pan P (en_iyi_dikey=0.034)")
+    p.add_argument("--kp", type=float, default=None, help="Pan P (en_iyi_dikey=0.045)")
     p.add_argument("--ki", type=float, default=None)
-    p.add_argument("--kd", type=float, default=None, help="Pan D (en_iyi_dikey=0.010)")
+    p.add_argument("--kd", type=float, default=None, help="Pan D (en_iyi_dikey=0.007)")
     p.add_argument("--kp-tilt", type=float, default=None, help="Tilt P (en_iyi_dikey=0.018)")
     p.add_argument("--ki-tilt", type=float, default=None)
     p.add_argument("--kd-tilt", type=float, default=None, help="Tilt D (en_iyi_dikey=0.022)")
-    p.add_argument("--out-limit", type=float, default=5.0)
+    p.add_argument("--out-limit", type=float, default=8.0)
     p.add_argument(
         "--tilt-gravity-kg",
         type=float,
