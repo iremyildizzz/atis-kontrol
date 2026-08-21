@@ -41,6 +41,7 @@ static bool     s_armed    = false;
 static bool     s_enabled  = false;
 static uint8_t  s_stage    = 0;
 static bool     s_fire_edge_armed = false; /* FIRE rising-edge için */
+static uint16_t s_fire_busy_frames = 0;    /* UART frame ile pulse emniyet sayacı */
 
 /* CubeMX stub'ları — gerçek projede Cube üretimi kullanılır */
 void SystemClock_Config(void);
@@ -134,10 +135,11 @@ static void handle_command(const ProtoCommand *cmd)
 
     s_armed = (cmd->flags & FLAG_ARM) != 0;
 
-    /* ATES_ET: rising edge + ARM + ENABLE (açı limit ateşi engellemesin) */
+    /* ATES_ET: rising edge → 180 ms pulse; FIRE=0 ve süre dolunca pin low */
     const bool fire_req = (cmd->flags & FLAG_FIRE) != 0;
     if (fire_req && !s_fire_edge_armed) {
         s_fire_edge_armed = true;
+        s_fire_busy_frames = 0;
         const bool ok =
             s_armed &&
             s_enabled &&
@@ -146,12 +148,24 @@ static void handle_command(const ProtoCommand *cmd)
 
         if (ok) {
             Trigger_RequestFire();
-            /* KTR: "ateşleme gerçekleşti" geri bildirimi */
             send_telemetry(true);
         }
     }
     if (!fire_req) {
         s_fire_edge_armed = false;
+    }
+
+    /* Systick olmasa bile: ~20 frame sonra (~200–400ms) MOSFET'i kes */
+    if (Trigger_IsBusy()) {
+        if (s_fire_busy_frames < 0xFFFFu) {
+            s_fire_busy_frames++;
+        }
+        if (s_fire_busy_frames >= 20u) {
+            Trigger_Abort();
+            s_fire_busy_frames = 0;
+        }
+    } else {
+        s_fire_busy_frames = 0;
     }
 }
 
@@ -189,12 +203,6 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
     }
 }
 
-void HAL_SYSTICK_Callback(void)
-{
-    s_ms++;
-    Trigger_Tick1ms();
-}
-
 int main(void)
 {
     HAL_Init();
@@ -209,8 +217,21 @@ int main(void)
 
     HAL_UART_Receive_IT(&huart1, &s_rx_byte, 1);
 
+    uint32_t last_tick = HAL_GetTick();
+
     while (1) {
         poll_uart_frames();
+
+        /*
+         * PB1: her turda süre kontrolü — 180 ms dolunca pin zorunlu LOW.
+         * HAL_SYSTICK_Callback Cube'da yok; Service HAL_GetTick kullanır.
+         */
+        Trigger_Service();
+        const uint32_t now = HAL_GetTick();
+        if (now != last_tick) {
+            last_tick = now;
+            s_ms = now;
+        }
 
         /* RD-08: heartbeat / frame timeout */
         if (!s_failsafe && (s_ms - s_last_cmd_ms) > HEARTBEAT_TIMEOUT_MS) {

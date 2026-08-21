@@ -369,7 +369,7 @@ def run(args: argparse.Namespace) -> None:
                     pan_deg=pan,
                     tilt_deg=tilt_cmd,
                     fire=want_fire,
-                    arm=bool(want_fire or snap.arm),
+                    arm=bool(want_fire),
                     heartbeat=True,
                     home=home,
                     safe=False,
@@ -379,23 +379,23 @@ def run(args: argparse.Namespace) -> None:
                 min_period_s=0.0 if want_fire else 0.02,
             )
 
-            # STM rising-edge + ~180 ms pulse; hemen FIRE=0 (röle açık kalmasın)
+            # STM rising-edge + ~180 ms; ardından birkaç FIRE=0 (röle açık kalmasın)
             if want_fire and sent:
                 print("[FIRE] tek pulse → STM (~180ms), sonra FIRE=0")
-                bridge.send(
-                    DownlinkCommand(
-                        pan_deg=pan,
-                        tilt_deg=tilt_cmd,
-                        fire=False,
-                        arm=False,
-                        heartbeat=True,
-                        home=False,
-                        safe=False,
-                        enable=True,
-                        stage=stage,
-                    ),
-                    min_period_s=0.0,
+                off = DownlinkCommand(
+                    pan_deg=pan,
+                    tilt_deg=tilt_cmd,
+                    fire=False,
+                    arm=False,
+                    heartbeat=True,
+                    home=False,
+                    safe=False,
+                    enable=True,
+                    stage=stage,
                 )
+                for _ in range(3):
+                    bridge.send(off, min_period_s=0.0)
+                    time.sleep(0.002)
 
             if now - last_status >= 0.2:
                 last_status = now

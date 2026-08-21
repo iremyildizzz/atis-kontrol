@@ -8,12 +8,13 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define TRIGGER_PULSE_MS  180u  /* manuel ATEŞ: tek pulse, sonra MOSFET low */
+#define TRIGGER_PULSE_MS  180u
 
 void Trigger_Init(void);
 void Trigger_Abort(void);
 void Trigger_RequestFire(void);
 void Trigger_Tick1ms(void);
+void Trigger_Service(void);
 
 bool Trigger_IsBusy(void);
 bool Trigger_ConsumeFiredFlag(void);
