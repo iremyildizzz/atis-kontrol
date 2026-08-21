@@ -17,32 +17,37 @@ Kablo:
 - RPi TXD → STM32 PA10 (RX)
 - RPi RXD → STM32 PA9 (TX)
 - GND ortak
-- LiDAR ayrı UART (`/dev/ttyAMA1`)
+- LiDAR UART4 (`/dev/ttyAMA4`, GPIO33)
 
 ## Çalıştırma
 
 ```bash
 python -m fire_control.main \
   --stm-port /dev/ttyAMA0 \
-  --lidar-port "" \
+  --lidar-port /dev/ttyAMA4 \
   --tcp-port 5005 \
   --video-host 192.168.137.147 \
   --frame-w 640 \
   --frame-h 480
 ```
 
-Varsayılan PID preset: **`iyi_yatay`** → `P=0.034 I=0 D=0.010` + tilt yerçekimi FF (`Kg=0.8°`, `cos(elev)`).
+Varsayılan PID preset: **`iyi_yatay`**
+- pan: `P=0.034 I=0 D=0.010`
+- tilt: `P=0.018 I=0 D=0.022` (daha yumuşak + frenli; dikey kaçırmayı kesmek için)
 
 ```bash
 # Preset açık (varsayılan)
 python -m fire_control.main --pid-preset iyi_yatay ...
 
-# FF’yi elle ayarla / kapat
+# Tilt’i daha da yumuşat
+python -m fire_control.main --kp-tilt 0.014 --kd-tilt 0.028 ...
+
+# FF (genelde kapalı; droop için)
 python -m fire_control.main --tilt-gravity-kg 1.2 --tilt-gravity-mode cos ...
 python -m fire_control.main --tilt-gravity-kg 0 ...
 
 # Preset’siz
-python -m fire_control.main --pid-preset none --kp 0.034 --kd 0.010 ...
+python -m fire_control.main --pid-preset none --kp 0.034 --kd 0.010 --kp-tilt 0.018 --kd-tilt 0.022 ...
 ```
 
 Yerçekimi FF, PID state’ine birikmez; STM’ye giden `tilt_cmd = tilt + Kg·cos(elev)` (droop telafisi). Aksi halde her döngüde Δ’ya eklenen Kg ramp yapardı.

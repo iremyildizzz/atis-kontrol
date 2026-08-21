@@ -25,7 +25,7 @@ class PidPreset:
     tilt_gravity_mode: str = "cos"
 
 
-# Ad: en_iyi_dikey — son yapılan dikey ayar (pan iyi + tilt yumuşak/frenli)
+# Ad: en_iyi_dikey — pan daha çevik (geç cevap azalt); tilt yumuşak/frenli
 EN_IYI_DIKEY = PidPreset(
     name="en_iyi_dikey",
     kp=0.034,

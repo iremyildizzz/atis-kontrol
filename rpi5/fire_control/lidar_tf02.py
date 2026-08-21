@@ -19,7 +19,7 @@ class TF02Pro:
     Frame: 0x59 0x59 Dist_L Dist_H Strength_L Strength_H Temp_L Temp_H Checksum
     """
 
-    def __init__(self, port: str = "/dev/ttyAMA1", baud: int = 115200) -> None:
+    def __init__(self, port: str = "/dev/ttyAMA4", baud: int = 115200) -> None:
         self._ser = serial.Serial(port, baud, timeout=0.02)
         self._buf = bytearray()
         self.last: Optional[LidarReading] = None

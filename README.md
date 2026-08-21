@@ -29,5 +29,5 @@ cd rpi5
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-python -m fire_control.main --tcp-port 5005 --stm-port /dev/ttyAMA0 --lidar-port /dev/ttyAMA1
+python -m fire_control.main --tcp-port 5005 --stm-port /dev/ttyAMA0 --lidar-port /dev/ttyAMA4
 ```
