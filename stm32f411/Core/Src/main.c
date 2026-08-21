@@ -135,36 +135,21 @@ static void handle_command(const ProtoCommand *cmd)
 
     s_armed = (cmd->flags & FLAG_ARM) != 0;
 
-    /* ATES_ET: rising edge → 180 ms pulse; FIRE=0 ve süre dolunca pin low */
+    /* FIRE=1 → HIGH (max pulse); FIRE=0 → anında LOW */
     const bool fire_req = (cmd->flags & FLAG_FIRE) != 0;
-    if (fire_req && !s_fire_edge_armed) {
-        s_fire_edge_armed = true;
-        s_fire_busy_frames = 0;
-        const bool ok =
-            s_armed &&
-            s_enabled &&
-            !s_failsafe &&
-            !Trigger_IsBusy();
-
+    if (fire_req) {
+        const bool ok = s_armed && s_enabled && !s_failsafe;
         if (ok) {
-            Trigger_RequestFire();
-            send_telemetry(true);
-        }
-    }
-    if (!fire_req) {
-        s_fire_edge_armed = false;
-    }
-
-    /* Systick olmasa bile: ~20 frame sonra (~200–400ms) MOSFET'i kes */
-    if (Trigger_IsBusy()) {
-        if (s_fire_busy_frames < 0xFFFFu) {
-            s_fire_busy_frames++;
-        }
-        if (s_fire_busy_frames >= 20u) {
+            if (!Trigger_IsBusy()) {
+                Trigger_RequestFire();
+                send_telemetry(true);
+            }
+        } else {
             Trigger_Abort();
-            s_fire_busy_frames = 0;
         }
     } else {
+        Trigger_Abort();
+        s_fire_edge_armed = false;
         s_fire_busy_frames = 0;
     }
 }

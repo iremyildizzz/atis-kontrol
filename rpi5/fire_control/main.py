@@ -331,32 +331,11 @@ def run(args: argparse.Namespace) -> None:
             allow_iff = iff_allows_fire(stage, snap.iff, snap.engage_active)
             centered = abs(err_pan_deg) <= limits.engage_err_deg and abs(err_tilt_deg) <= limits.engage_err_deg
 
-            # YKİ ATEŞ / engage: tek kenar — latch'i hemen tüket, FIRE sürekli HIGH kalmasın
+            # YKİ ATEŞ: yalnız engage oneshot — stage2/3 otomatik ateş YOK (röle kilitlenmesin)
             ui_oneshot = bool(snap.fire or snap.engage_active)
             if ui_oneshot:
                 state.clear_engage()
                 in_range_since = None
-                want_fire = True
-            elif stage == 2:
-                want_fire = bool(
-                    snap.arm
-                    and snap.enable
-                    and snap.locked
-                    and centered
-                    and allow_iff
-                )
-            elif stage >= 3:
-                want_fire = bool(
-                    snap.arm
-                    and snap.enable
-                    and snap.locked
-                    and centered
-                    and allow_iff
-                    and lidar_ok
-                    and range_stable
-                )
-            else:
-                want_fire = False
 
             # Yerçekimi FF: state'teki tilt birikmez; STM komutuna eklenir.
             tilt_cmd = tilt_gravity_ff(
@@ -364,25 +343,21 @@ def run(args: argparse.Namespace) -> None:
             )
             tilt_cmd = clamp(tilt_cmd, limits.tilt_min, limits.tilt_max)
 
-            sent = bridge.send(
-                DownlinkCommand(
+            if ui_oneshot:
+                # STM artık FIRE seviyesine bakıyor: ~180 ms HIGH, sonra LOW
+                print("[FIRE] oneshot: FIRE=1 ~180ms → FIRE=0")
+                on_cmd = DownlinkCommand(
                     pan_deg=pan,
                     tilt_deg=tilt_cmd,
-                    fire=want_fire,
-                    arm=bool(want_fire),
+                    fire=True,
+                    arm=True,
                     heartbeat=True,
-                    home=home,
+                    home=False,
                     safe=False,
                     enable=True,
                     stage=stage,
-                ),
-                min_period_s=0.0 if want_fire else 0.02,
-            )
-
-            # STM rising-edge + ~180 ms; ardından birkaç FIRE=0 (röle açık kalmasın)
-            if want_fire and sent:
-                print("[FIRE] tek pulse → STM (~180ms), sonra FIRE=0")
-                off = DownlinkCommand(
+                )
+                off_cmd = DownlinkCommand(
                     pan_deg=pan,
                     tilt_deg=tilt_cmd,
                     fire=False,
@@ -393,9 +368,33 @@ def run(args: argparse.Namespace) -> None:
                     enable=True,
                     stage=stage,
                 )
-                for _ in range(3):
-                    bridge.send(off, min_period_s=0.0)
+                bridge.send(on_cmd, min_period_s=0.0)
+                t_end = time.monotonic() + 0.18
+                while time.monotonic() < t_end:
+                    bridge.send(on_cmd, min_period_s=0.0)
+                    bridge.poll()
+                    time.sleep(0.01)
+                for _ in range(5):
+                    bridge.send(off_cmd, min_period_s=0.0)
                     time.sleep(0.002)
+                print("[FIRE] oneshot bitti (FIRE=0)")
+                want_fire = False
+            else:
+                want_fire = False
+                bridge.send(
+                    DownlinkCommand(
+                        pan_deg=pan,
+                        tilt_deg=tilt_cmd,
+                        fire=False,
+                        arm=False,
+                        heartbeat=True,
+                        home=home,
+                        safe=False,
+                        enable=True,
+                        stage=stage,
+                    ),
+                    min_period_s=0.02,
+                )
 
             if now - last_status >= 0.2:
                 last_status = now

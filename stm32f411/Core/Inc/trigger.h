@@ -8,7 +8,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define TRIGGER_PULSE_MS  180u
+#define TRIGGER_PULSE_MS  200u
 
 void Trigger_Init(void);
 void Trigger_Abort(void);
