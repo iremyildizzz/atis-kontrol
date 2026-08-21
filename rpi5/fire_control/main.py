@@ -331,8 +331,7 @@ def run(args: argparse.Namespace) -> None:
             allow_iff = iff_allows_fire(stage, snap.iff, snap.engage_active)
             centered = abs(err_pan_deg) <= limits.engage_err_deg and abs(err_tilt_deg) <= limits.engage_err_deg
 
-            # YKİ ATEŞ: tek UART kenarı — while ile 180 ms paket basma YOK
-            # (kuyrukta biriken FIRE=1 STM'i kilitliyordu)
+            # YKİ ATEŞ = KEY basışı: tek FIRE=1 kenarı; süreyi STM (180ms) yönetir
             ui_oneshot = bool(snap.fire or snap.engage_active)
             if ui_oneshot:
                 state.clear_engage()
@@ -344,8 +343,7 @@ def run(args: argparse.Namespace) -> None:
             tilt_cmd = clamp(tilt_cmd, limits.tilt_min, limits.tilt_max)
 
             if ui_oneshot:
-                # Tek FIRE=1, sleep YOK, sonra FIRE=0 (STM rising-edge + 200ms)
-                print("[FIRE] oneshot UART basılıyor")
+                print("[FIRE] KEY-style oneshot: FIRE=1 kenarı (STM 180ms pulse)")
                 on_cmd = DownlinkCommand(
                     pan_deg=pan,
                     tilt_deg=tilt_cmd,
@@ -368,12 +366,16 @@ def run(args: argparse.Namespace) -> None:
                     enable=True,
                     stage=stage,
                 )
-                ok1 = bridge.send(on_cmd, min_period_s=0.0)
-                print(f"[UART] on_cmd fire=1 arm=1 en=1 sent={ok1}")
-                for i in range(3):
-                    ok0 = bridge.send(off_cmd, min_period_s=0.0)
-                    print(f"[UART] off_cmd fire=0 sent={ok0} ({i})")
-                print("[FIRE] oneshot bitti — STM ~200ms pulse bekleniyor")
+                # Rising edge için önce 0, sonra 1 (STM s_last_fire_req)
+                bridge.send(off_cmd, min_period_s=0.0)
+                bridge.poll()
+                ok = bridge.send(on_cmd, min_period_s=0.0)
+                print(f"[UART] FIRE=1 sent={ok}")
+                # Pulse STM'de sürer; FIRE=0 kesmez — yine de idle'a dön
+                time.sleep(0.02)
+                for _ in range(3):
+                    bridge.send(off_cmd, min_period_s=0.0)
+                print("[FIRE] oneshot gitti — STM ~180ms ON bekleniyor")
                 want_fire = False
             else:
                 want_fire = False

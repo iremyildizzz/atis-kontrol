@@ -1,6 +1,9 @@
 /**
  * @file trigger.h
- * @brief MOSFET tetik — PB1 (IRLZ44N gate), aktif-high pulse
+ * @brief MOSFET tetik — PB1, jumper H (LOW=OFF, HIGH=ON)
+ *
+ * KEY test firmware ile aynı: 1 istek → 1 kısa atış (TRIG_PULSE_MS).
+ * Pulse süresini STM yönetir; FIRE=0 ortada kesmez.
  */
 #ifndef ATIS_TRIGGER_H
 #define ATIS_TRIGGER_H
@@ -8,7 +11,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define TRIGGER_PULSE_MS  200u
+/* KEY testte çalışan değer — 2 atış olursa 170; yarım kalırsa 190–210 */
+#define TRIGGER_PULSE_MS  180u
 
 void Trigger_Init(void);
 void Trigger_Abort(void);

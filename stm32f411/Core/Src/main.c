@@ -40,8 +40,6 @@ static bool     s_failsafe = true;
 static bool     s_armed    = false;
 static bool     s_enabled  = false;
 static uint8_t  s_stage    = 0;
-static bool     s_fire_edge_armed = false; /* FIRE rising-edge için */
-static uint16_t s_fire_busy_frames = 0;    /* UART frame ile pulse emniyet sayacı */
 
 /* CubeMX stub'ları — gerçek projede Cube üretimi kullanılır */
 void SystemClock_Config(void);
@@ -134,20 +132,22 @@ static void handle_command(const ProtoCommand *cmd)
 
     s_armed = (cmd->flags & FLAG_ARM) != 0;
 
-    /* Rising-edge: FIRE=0 Abort yok; pulse Trigger_Service */
+    /*
+     * KEY firmware: basma kenarı → RelayOneShot (180ms).
+     * FIRE 0→1 → RequestFire; FIRE=0 pulse'u kesmez.
+     */
     {
         static bool s_last_fire_req = false;
         const bool fire_req = (cmd->flags & FLAG_FIRE) != 0;
         if (fire_req && !s_last_fire_req) {
-            if (Trigger_IsBusy()) {
-                Trigger_Abort();
-            }
             s_failsafe = false;
             s_armed = true;
             s_enabled = true;
             Servo_SetEnabled(true);
-            Trigger_RequestFire();
-            send_telemetry(true);
+            if (!Trigger_IsBusy()) {
+                Trigger_RequestFire();
+                send_telemetry(true);
+            }
         }
         s_last_fire_req = fire_req;
     }
@@ -227,7 +227,7 @@ int main(void)
         }
 
         /* RD-08: heartbeat / frame timeout */
-        if (!s_failsafe && (s_ms - s_last_cmd_ms) > HEARTBEAT_TIMEOUT_MS) {
+        if (!s_failsafe && (HAL_GetTick() - s_last_cmd_ms) > HEARTBEAT_TIMEOUT_MS) {
             enter_failsafe();
         }
 
