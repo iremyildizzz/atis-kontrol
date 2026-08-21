@@ -331,34 +331,32 @@ def run(args: argparse.Namespace) -> None:
             allow_iff = iff_allows_fire(stage, snap.iff, snap.engage_active)
             centered = abs(err_pan_deg) <= limits.engage_err_deg and abs(err_tilt_deg) <= limits.engage_err_deg
 
-            fire_intent = bool(snap.fire or snap.engage_active)
-
-            # Eski / basit: engage bir kez FIRE, STM 180 ms pulse, sonra kapalı
-            if stage <= 1 and snap.mode == "manuel":
-                want_fire = bool(fire_intent and snap.arm and snap.enable)
-            elif snap.engage_active or snap.fire:
-                # Manuel dışı ATEŞ düğmesi: kapı yok, tek frame
+            # YKİ ATEŞ / engage: tek kenar — latch'i hemen tüket, FIRE sürekli HIGH kalmasın
+            ui_oneshot = bool(snap.fire or snap.engage_active)
+            if ui_oneshot:
+                state.clear_engage()
+                in_range_since = None
                 want_fire = True
             elif stage == 2:
                 want_fire = bool(
-                    fire_intent
-                    and snap.arm
+                    snap.arm
                     and snap.enable
-                    and (snap.locked or snap.engage_active)
+                    and snap.locked
                     and centered
                     and allow_iff
                 )
-            else:
+            elif stage >= 3:
                 want_fire = bool(
-                    fire_intent
-                    and snap.arm
+                    snap.arm
                     and snap.enable
-                    and (snap.locked or snap.engage_active)
+                    and snap.locked
                     and centered
                     and allow_iff
                     and lidar_ok
                     and range_stable
                 )
+            else:
+                want_fire = False
 
             # Yerçekimi FF: state'teki tilt birikmez; STM komutuna eklenir.
             tilt_cmd = tilt_gravity_ff(
@@ -371,7 +369,7 @@ def run(args: argparse.Namespace) -> None:
                     pan_deg=pan,
                     tilt_deg=tilt_cmd,
                     fire=want_fire,
-                    arm=bool(snap.arm or want_fire),
+                    arm=bool(want_fire or snap.arm),
                     heartbeat=True,
                     home=home,
                     safe=False,
@@ -381,17 +379,15 @@ def run(args: argparse.Namespace) -> None:
                 min_period_s=0.0 if want_fire else 0.02,
             )
 
-            # Tek frame yeter (STM rising-edge + 180 ms pulse) — hemen temizle + FIRE=0
+            # STM rising-edge + ~180 ms pulse; hemen FIRE=0 (röle açık kalmasın)
             if want_fire and sent:
-                print("[FIRE] tek pulse gönderildi (STM ~180ms)")
-                state.clear_engage()
-                in_range_since = None
+                print("[FIRE] tek pulse → STM (~180ms), sonra FIRE=0")
                 bridge.send(
                     DownlinkCommand(
                         pan_deg=pan,
                         tilt_deg=tilt_cmd,
                         fire=False,
-                        arm=bool(snap.arm),
+                        arm=False,
                         heartbeat=True,
                         home=False,
                         safe=False,

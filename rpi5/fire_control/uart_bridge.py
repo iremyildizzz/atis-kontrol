@@ -21,6 +21,7 @@ class Stm32Bridge:
         self._on_telemetry = on_telemetry
         self.last_telem: Optional[UplinkTelemetry] = None
         self._last_send = 0.0
+        self._last_fire = False
 
     def close(self) -> None:
         self._ser.close()
@@ -35,12 +36,14 @@ class Stm32Bridge:
         return tels
 
     def send(self, cmd: DownlinkCommand, min_period_s: float = 0.02) -> bool:
-        """Frame yazıldıysa True. Ateş (FIRE) frame'leri rate-limit'i aşar."""
+        """Frame yazıldıysa True. FIRE kenarları (1→0 dahil) rate-limit'i aşar."""
         now = time.monotonic()
-        force = bool(cmd.fire or cmd.home or cmd.safe)
+        fire_fall = self._last_fire and not bool(cmd.fire)
+        force = bool(cmd.fire or cmd.home or cmd.safe or fire_fall)
         if not force and now - self._last_send < min_period_s:
             return False
         self._last_send = now
+        self._last_fire = bool(cmd.fire)
         self._ser.write(cmd.to_frame())
         self._ser.flush()
         return True
