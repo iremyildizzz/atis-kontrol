@@ -378,6 +378,15 @@ def run(args: argparse.Namespace) -> None:
                     bridge.send(off_cmd, min_period_s=0.0)
                     time.sleep(0.002)
                 print("[FIRE] oneshot bitti (FIRE=0)")
+                # Teşhis: STM hâlâ BUSY ise chip'te ESKİ firmware var
+                time.sleep(0.05)
+                bridge.poll()
+                tel = bridge.last_telem
+                if tel is not None and bool(getattr(tel, "busy", False)):
+                    print(
+                        "[FIRE][HATA] STM hâlâ BUSY — hss'e YENİ firmware "
+                        "flash edilmemiş (FIRE=0 pini düşürmüyor)!"
+                    )
                 want_fire = False
             else:
                 want_fire = False

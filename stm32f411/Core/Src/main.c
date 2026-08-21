@@ -135,7 +135,7 @@ static void handle_command(const ProtoCommand *cmd)
 
     s_armed = (cmd->flags & FLAG_ARM) != 0;
 
-    /* FIRE=1 → HIGH (max pulse); FIRE=0 → anında LOW */
+    /* FIRE=1 → HIGH (max); FIRE=0 → anında LOW (eski fw bunu yapmıyordu) */
     const bool fire_req = (cmd->flags & FLAG_FIRE) != 0;
     if (fire_req) {
         const bool ok = s_armed && s_enabled && !s_failsafe;
@@ -144,6 +144,7 @@ static void handle_command(const ProtoCommand *cmd)
                 Trigger_RequestFire();
                 send_telemetry(true);
             }
+            Trigger_Service();
         } else {
             Trigger_Abort();
         }
@@ -207,15 +208,25 @@ int main(void)
     while (1) {
         poll_uart_frames();
 
-        /*
-         * PB1: her turda süre kontrolü — 180 ms dolunca pin zorunlu LOW.
-         * HAL_SYSTICK_Callback Cube'da yok; Service HAL_GetTick kullanır.
-         */
         Trigger_Service();
-        const uint32_t now = HAL_GetTick();
-        if (now != last_tick) {
-            last_tick = now;
-            s_ms = now;
+        {
+            const uint32_t now = HAL_GetTick();
+            static uint32_t high_since;
+            if (now != last_tick) {
+                last_tick = now;
+                s_ms = now;
+            }
+            if (Trigger_IsBusy()) {
+                if (high_since == 0u) {
+                    high_since = now ? now : 1u;
+                } else if ((uint32_t)(now - high_since) > 250u) {
+                    Trigger_Abort();
+                    high_since = 0u;
+                }
+            } else {
+                high_since = 0u;
+                Trigger_Abort();
+            }
         }
 
         /* RD-08: heartbeat / frame timeout */
