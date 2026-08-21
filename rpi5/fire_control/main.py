@@ -344,7 +344,9 @@ def run(args: argparse.Namespace) -> None:
             tilt_cmd = clamp(tilt_cmd, limits.tilt_min, limits.tilt_max)
 
             if ui_oneshot:
-                print("[FIRE] oneshot: tek FIRE=1 → FIRE=0 (STM ~200ms pulse)")
+                # Tek kenar: birkaç FIRE=1 (STM görsün), kısa ara, sonra FIRE=0
+                # 180ms while YOK — kuyruk şişmesin
+                print("[FIRE] oneshot: FIRE=1 kenarı → STM ~200ms pulse")
                 on_cmd = DownlinkCommand(
                     pan_deg=pan,
                     tilt_deg=tilt_cmd,
@@ -360,17 +362,20 @@ def run(args: argparse.Namespace) -> None:
                     pan_deg=pan,
                     tilt_deg=tilt_cmd,
                     fire=False,
-                    arm=False,
+                    arm=True,  # pulse bitene kadar ARM kalsın
                     heartbeat=True,
                     home=False,
                     safe=False,
                     enable=True,
                     stage=stage,
                 )
-                bridge.send(on_cmd, min_period_s=0.0)
+                for _ in range(3):
+                    bridge.send(on_cmd, min_period_s=0.0)
+                    time.sleep(0.015)
+                time.sleep(0.02)
                 for _ in range(3):
                     bridge.send(off_cmd, min_period_s=0.0)
-                print("[FIRE] oneshot gitti — pulse STM'de ~200ms")
+                print("[FIRE] oneshot UART gitti")
                 want_fire = False
             else:
                 want_fire = False

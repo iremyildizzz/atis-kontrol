@@ -140,9 +140,11 @@ static void handle_command(const ProtoCommand *cmd)
         static bool s_last_fire_req = false;
         const bool fire_req = (cmd->flags & FLAG_FIRE) != 0;
         if (fire_req && !s_last_fire_req) {
-            const bool ok =
-                s_armed && s_enabled && !s_failsafe && !Trigger_IsBusy();
+            const bool ok = s_armed && s_enabled && !s_failsafe;
             if (ok) {
+                if (Trigger_IsBusy()) {
+                    Trigger_Abort();
+                }
                 Trigger_RequestFire();
                 send_telemetry(true);
             }

@@ -175,6 +175,10 @@ class MissionState:
                 self.engage_active = True
                 self.arm = True
                 self.fire = True
+                print(
+                    f"[TCP] engage alındı track={msg.get('track_id')} "
+                    f"class={msg.get('class_id')}"
+                )
                 if "class_id" in msg:
                     self.class_id = int(msg["class_id"])
                     self.class_name = PEER_CLASS_NAMES.get(self.class_id, self.class_name)
